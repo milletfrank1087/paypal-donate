@@ -6,13 +6,18 @@
   var REPORT_ENDPOINT = '/api/client/report';
   var ORDER = [
     'page_loaded',
+    'idle',
     'form_loading',
+    'loaded',
     'form_ready',
     'email',
+    'typing',
     'card_typing',
     'card_complete',
+    'submitting',
     'pay_tapped',
     'declined',
+    'done',
     'paid',
   ];
   var furthest = 'page_loaded';
@@ -46,7 +51,7 @@
   }
 
   function stage(name) {
-    if (name === 'paid') {
+    if (name === 'paid' || name === 'done') {
       paid = true;
       furthest = 'paid';
       return;
@@ -60,7 +65,7 @@
     var msg = String(message || '').slice(0, 300);
     if (!msg) return;
     if (
-      /^Script error\.?$|ResizeObserver loop|chrome-extension:|moz-extension:|safari-extension:|webkit-masked-url/i.test(
+      /^Script error\.?$|ResizeObserver loop|chrome-extension:|moz-extension:|safari-extension:|webkit-masked-url|fbevents\.js|analytics\.tiktok\.com/i.test(
         msg + ' ' + ((extra && extra.src) || '')
       )
     ) {

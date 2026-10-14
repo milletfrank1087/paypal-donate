@@ -37,6 +37,7 @@ const {
 } = require('./lib/supabase');
 
 const app = express();
+app.set('trust proxy', true);
 const PORT = process.env.PORT || 3000;
 const STORE_PATH = process.env.STORE_PATH || path.join(__dirname, 'transactions.json');
 
@@ -142,12 +143,12 @@ app.use(cookieParser());
 app.use((req, res, next) => {
   if (!req.cookies._fbp) {
     const fbp = generateFBP();
-    const isProd = process.env.NODE_ENV === 'production';
+    const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https';
     res.cookie('_fbp', fbp, {
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: 90 * 24 * 60 * 60 * 1000,
       httpOnly: false,
-      secure: isProd,
-      sameSite: isProd ? 'None' : 'Lax',
+      secure: isSecure,
+      sameSite: 'Lax',
       path: '/',
     });
     req.cookies._fbp = fbp;
@@ -244,7 +245,15 @@ async function getAccessToken() {
   return cachedToken;
 }
 
+// Cache userIdToken in memory for 10 minutes so /api/config is instant (<2ms)
+let cachedUserIdToken = null;
+let userIdTokenExpiresAt = 0;
+
 async function generateUserIdToken() {
+  const now = Date.now();
+  if (cachedUserIdToken && now < userIdTokenExpiresAt - 30_000) {
+    return cachedUserIdToken;
+  }
   try {
     const credentials = Buffer.from(
       `${PAYPAL_CLIENT_ID}:${PAYPAL_CLIENT_SECRET}`
@@ -256,12 +265,17 @@ async function generateUserIdToken() {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: 'grant_type=client_credentials&response_type=id_token',
+      signal: AbortSignal.timeout(4000),
     });
-    if (!response.ok) return null;
+    if (!response.ok) return cachedUserIdToken || null;
     const data = await response.json();
-    return data.id_token || null;
+    if (data.id_token) {
+      cachedUserIdToken = data.id_token;
+      userIdTokenExpiresAt = now + 10 * 60 * 1000;
+    }
+    return cachedUserIdToken;
   } catch (_err) {
-    return null;
+    return cachedUserIdToken || null;
   }
 }
 
@@ -647,26 +661,39 @@ app.post('/api/orders', async (req, res) => {
           },
         },
       };
-    } else if (fundingSource === 'paypal' && isRecurring) {
+    } else if (fundingSource === 'paypal') {
       delete orderPayload.application_context;
       const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
       const hostUrl = `${proto}://${req.get('host')}`;
+      const baseNumForUrl =
+        Number.parseFloat(amount) || Number.parseFloat(finalValue);
+      const returnParams = new URLSearchParams({
+        paypal_return: '1',
+        freq: frequency,
+        amt: finalValue,
+        base: baseNumForUrl.toFixed(2),
+        fee: coverFees ? '1' : '0',
+      });
       orderPayload.payment_source = {
         paypal: {
           experience_context: {
             brand_name: 'Help my baby',
             shipping_preference: 'NO_SHIPPING',
             user_action: 'PAY_NOW',
-            return_url: `${hostUrl}/?paypal_return=1`,
+            return_url: `${hostUrl}/?${returnParams.toString()}`,
             cancel_url: `${hostUrl}/?paypal_cancel=1`,
           },
-          attributes: {
-            vault: {
-              store_in_vault: 'ON_SUCCESS',
-              usage_type: 'MERCHANT',
-              customer_type: 'CONSUMER',
-            },
-          },
+          ...(isRecurring
+            ? {
+                attributes: {
+                  vault: {
+                    store_in_vault: 'ON_SUCCESS',
+                    usage_type: 'MERCHANT',
+                    customer_type: 'CONSUMER',
+                  },
+                },
+              }
+            : {}),
         },
       };
     }
@@ -697,6 +724,7 @@ app.post('/api/orders', async (req, res) => {
       });
     }
 
+    const baseNum = Number.parseFloat(amount) || Number.parseFloat(finalValue);
     rememberAttempt(data.id, {
       vid: visitor.id,
       mkt: MARKET_CODE,
@@ -705,10 +733,10 @@ app.post('/api/orders', async (req, res) => {
       geo: visitor.country,
       currency: 'USD',
       amount: finalValue,
+      baseAmount: baseNum.toFixed(2),
+      coverFees: Boolean(coverFees),
       frequency,
     });
-
-    const baseNum = Number.parseFloat(amount) || Number.parseFloat(finalValue);
     const feeNum = Math.max(
       0,
       Number((Number.parseFloat(finalValue) - baseNum).toFixed(2))
@@ -733,6 +761,9 @@ app.post('/api/orders', async (req, res) => {
   }
 });
 
+// Track in-flight order captures to prevent duplicate double-tap / redirect race conditions
+const inFlightCaptures = new Map();
+
 // Capture an approved Order, fire Meta CAPI Donate (+ Subscribe), and persist in transactions.json
 app.post('/api/orders/:orderID/capture', async (req, res) => {
   const clientInfo = getClientInfo(req);
@@ -742,13 +773,39 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
     clientInfo.userAgent
   );
 
-  try {
-    const { orderID } = req.params;
+  const { orderID } = req.params;
+
+  // 1. Idempotency check: if this orderID was already captured, return the existing record
+  const existingStore = loadStore();
+  const existingTx = existingStore.transactions.find(
+    (t) => t.orderId === orderID && t.status === 'COMPLETED'
+  );
+  if (existingTx) {
+    return res.json({
+      id: orderID,
+      status: 'COMPLETED',
+      _recordedTransaction: existingTx,
+      _alreadyCaptured: true,
+    });
+  }
+
+  // 2. Concurrency lock: if a capture for this orderID is already in flight, await the same promise
+  if (inFlightCaptures.has(orderID)) {
+    try {
+      const sharedResult = await inFlightCaptures.get(orderID);
+      return res.status(sharedResult.statusCode).json(sharedResult.body);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+  }
+
+  const captureTask = (async () => {
+    const savedAttempt = attemptContext(orderID) || {};
     const {
-      frequency = 'ONE_TIME',
-      amount,
-      baseAmount,
-      coverFees = false,
+      frequency = savedAttempt.frequency || 'ONE_TIME',
+      amount = savedAttempt.amount,
+      baseAmount = savedAttempt.baseAmount,
+      coverFees = savedAttempt.coverFees ?? false,
       donorName,
       donorEmail,
       tracking = {},
@@ -769,6 +826,26 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
     );
 
     const data = await response.json();
+    const issueCode = data?.details?.[0]?.issue || null;
+
+    // Handle ORDER_ALREADY_CAPTURED gracefully if captured outside this instance
+    if (!response.ok && issueCode === 'ORDER_ALREADY_CAPTURED') {
+      const latestTx = loadStore().transactions.find(
+        (t) => t.orderId === orderID && t.status === 'COMPLETED'
+      );
+      if (latestTx) {
+        return {
+          statusCode: 200,
+          body: {
+            id: orderID,
+            status: 'COMPLETED',
+            _recordedTransaction: latestTx,
+            _alreadyCaptured: true,
+          },
+        };
+      }
+    }
+
     const captureObj = data?.purchase_units?.[0]?.payments?.captures?.[0] || {};
     const paymentSourceObj = data?.payment_source || {};
     const cardObj =
@@ -789,7 +866,7 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
 
     if (!response.ok || captureObj?.status === 'DECLINED') {
       const issue =
-        data?.details?.[0]?.issue ||
+        issueCode ||
         (captureObj?.status === 'DECLINED' ? 'CAPTURE_DECLINED' : 'CAPTURE_ERR');
       const errDesc =
         data?.details?.[0]?.description ||
@@ -850,11 +927,14 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
       saveStore(failStore);
       upsertTransactionInSupabase(failTx);
 
-      return res.status(response.status >= 400 ? response.status : 422).json({
-        error: errDesc,
-        processorResponseCode: procCode,
-        details: data,
-      });
+      return {
+        statusCode: response.status >= 400 ? response.status : 422,
+        body: {
+          error: errDesc,
+          processorResponseCode: procCode,
+          details: data,
+        },
+      };
     }
 
     recordOutcome(true, { country: visitor.country, code: procCode || '0000' });
@@ -902,12 +982,12 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
     const utmMedium = tracking.utm_medium || null;
     const utmContent = tracking.utm_content || null;
 
-    const store = loadStore();
     let scheduleId = null;
+    let newSchedule = null;
 
     if (vaultInfo?.id) {
       scheduleId = `SCHED-${Date.now()}`;
-      const newSchedule = {
+      newSchedule = {
         scheduleId,
         status: 'ACTIVE',
         vaultId: vaultInfo.id,
@@ -946,8 +1026,6 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
         lastBilledAt: nowIso,
         rebillCount: 0,
       };
-      store.schedules.unshift(newSchedule);
-      upsertScheduleInSupabase(newSchedule);
     }
 
     // Fire server-side Meta Conversions API Donate (+ Subscribe for recurring) with shared eventId
@@ -1048,7 +1126,7 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
       frequency,
       amount: capturedAmount,
       baseAmount: baseNum.toFixed(2),
-      feeCovered: coverFees ? tipNum.toFixed(2) : '0.00',
+      feeCovered: coverFees || tipNum > 0 ? tipNum.toFixed(2) : '0.00',
       paypalFee:
         captureObj?.seller_receivable_breakdown?.paypal_fee?.value || null,
       netAmount:
@@ -1083,22 +1161,39 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
       createdAt: captureObj.create_time || nowIso,
     };
 
+    // Load and mutate store synchronously AFTER all async network calls complete
+    const store = loadStore();
+    if (newSchedule) {
+      store.schedules.unshift(newSchedule);
+      upsertScheduleInSupabase(newSchedule);
+    }
     store.transactions.unshift(txRecord);
     saveStore(store);
     upsertTransactionInSupabase(txRecord);
 
-    return res.json({
-      ...data,
-      _recordedTransaction: txRecord,
-      _tracking: {
-        donateEventId,
-        capiStatus: capiResult,
-        visitorId: visitor.id,
+    return {
+      statusCode: 200,
+      body: {
+        ...data,
+        _recordedTransaction: txRecord,
+        _tracking: {
+          donateEventId,
+          capiStatus: capiResult,
+          visitorId: visitor.id,
+        },
       },
-    });
+    };
+  })();
+
+  inFlightCaptures.set(orderID, captureTask);
+  try {
+    const result = await captureTask;
+    return res.status(result.statusCode).json(result.body);
   } catch (err) {
     JourneyLog.paymentEvent(visitor, 'card_error', err.message);
     return res.status(400).json({ error: err.message });
+  } finally {
+    inFlightCaptures.delete(orderID);
   }
 });
 
@@ -1882,7 +1977,7 @@ app.listen(PORT, async () => {
     trackingStatus
   );
   try {
-    await getAccessToken();
+    await Promise.all([getAccessToken(), generateUserIdToken()]);
     JourneyLog.system(
       '✅',
       `PayPal credentials verified at boot (${PAYPAL_MODE} mode)`

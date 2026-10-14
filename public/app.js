@@ -257,6 +257,9 @@
       state.validationErrorMessage = 'Amount is required';
       updateUI();
       triggerErrorShake();
+      try {
+        amountBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } catch (_e) {}
       amountInput.focus();
       return false;
     }
@@ -265,6 +268,9 @@
       state.validationErrorMessage = '$1 minimum donation';
       updateUI();
       triggerErrorShake();
+      try {
+        amountBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } catch (_e) {}
       amountInput.focus();
       return false;
     }
@@ -515,7 +521,9 @@
     );
     const data = await response.json();
     if (!response.ok) {
-      throw new Error(data.error || 'Could not capture donation.');
+      const capErr = new Error(data.error || 'Could not capture donation.');
+      capErr.alreadyRecordedOnServer = true;
+      throw capErr;
     }
     return data;
   }
@@ -602,7 +610,7 @@
             err?.message || 'PayPal checkout encountered an error.',
             'error'
           );
-          if (window.Tracking) {
+          if (!err?.alreadyRecordedOnServer && window.Tracking) {
             window.Tracking.trackPaymentEvent(
               'paypal_error',
               rawErr.slice(0, 220),
@@ -715,6 +723,9 @@
             const rawErr = String(err?.message || err || '').replace(/\s+/g, ' ');
             const msg = formatCardErrorMessage(err);
             showStatus(msg, 'error');
+            if (err?.alreadyRecordedOnServer) {
+              state.errorReportedForAttempt = true;
+            }
             if (!state.errorReportedForAttempt && window.Tracking) {
               state.errorReportedForAttempt = true;
               const detailPayload =
@@ -730,7 +741,7 @@
             }
             if (window.CheckoutMonitor) {
               window.CheckoutMonitor.attempt(
-                'error',
+                err?.alreadyRecordedOnServer ? 'declined' : 'error',
                 activeAttemptStart ? Date.now() - activeAttemptStart : 0
               );
             }
@@ -904,7 +915,7 @@
             }
             const msg = err?.message || 'Google Pay checkout failed.';
             showStatus(msg, 'error');
-            if (window.Tracking) {
+            if (!err?.alreadyRecordedOnServer && window.Tracking) {
               window.Tracking.trackPaymentEvent(
                 'paypal_error',
                 `Google Pay: ${msg.slice(0, 200)}`,
@@ -1056,7 +1067,7 @@
             session.completePayment(window.ApplePaySession.STATUS_FAILURE);
             const msg = err?.message || 'Apple Pay authorization failed.';
             showStatus(msg, 'error');
-            if (window.Tracking) {
+            if (!err?.alreadyRecordedOnServer && window.Tracking) {
               window.Tracking.trackPaymentEvent(
                 'paypal_error',
                 `Apple Pay capture: ${msg.slice(0, 180)}`,
@@ -1140,6 +1151,9 @@
     } catch (err) {
       const msg = formatCardErrorMessage(err);
       showStatus(msg, 'error');
+      if (err?.alreadyRecordedOnServer) {
+        state.errorReportedForAttempt = true;
+      }
       if (!state.errorReportedForAttempt && window.Tracking) {
         state.errorReportedForAttempt = true;
         const rawErr = String(err?.message || err || '').replace(/\s+/g, ' ');
@@ -1207,6 +1221,106 @@
     });
   }
 
+  async function handlePayPalRedirectReturnIfPresent() {
+    const params = new URLSearchParams(window.location.search);
+    const isReturn = params.get('paypal_return') === '1';
+    const isCancel = params.get('paypal_cancel') === '1';
+    const orderToken = params.get('token');
+
+    if (!isReturn && !isCancel) return;
+
+    const freqParam = params.get('freq');
+    const amtParam = params.get('amt');
+    const baseParam = params.get('base');
+    const feeParam = params.get('fee');
+
+    // Clean PayPal return parameters from URL so page refresh does not re-trigger
+    [
+      'paypal_return',
+      'paypal_cancel',
+      'token',
+      'PayerID',
+      'ba_token',
+      'freq',
+      'amt',
+      'base',
+      'fee',
+    ].forEach((k) => params.delete(k));
+    const remainingQuery = params.toString();
+    const cleanUrl =
+      window.location.pathname + (remainingQuery ? `?${remainingQuery}` : '');
+    try {
+      window.history.replaceState({}, '', cleanUrl);
+    } catch (_e) {}
+
+    if (isCancel) {
+      if (window.Tracking) {
+        window.Tracking.trackPaymentEvent(
+          'modal_close',
+          'cancelled PayPal redirect flow',
+          null,
+          'paypal'
+        );
+      }
+      return;
+    }
+
+    if (isReturn && orderToken) {
+      if (freqParam === 'WEEK' || freqParam === 'MONTH' || freqParam === 'ONE_TIME') {
+        state.frequency = freqParam;
+        tabButtons.forEach((b) => {
+          b.setAttribute(
+            'aria-selected',
+            b.getAttribute('data-frequency') === freqParam ? 'true' : 'false'
+          );
+        });
+        updateSegmentedSlider();
+      }
+      if (baseParam && Number.isFinite(Number(baseParam)) && Number(baseParam) >= 1) {
+        handleAmountInput(String(Number(baseParam)));
+      }
+      if (feeParam === '1') {
+        state.coverFees = true;
+        if (coverFeeCheckbox) coverFeeCheckbox.checked = true;
+      }
+      updateUI();
+
+      showStatus('Completing your PayPal donation...', 'success');
+      try {
+        const donateEventId = window.Tracking
+          ? window.Tracking.generateEventId('Donate')
+          : `Donate_${Date.now()}`;
+        const captureData = await captureOrderOnServer(
+          orderToken,
+          donateEventId
+        );
+        const finalVal =
+          Number.parseFloat(
+            captureData?._recordedTransaction?.amount || amtParam || state.amount
+          ) || getFinalAmountNumber();
+        if (!captureData._alreadyCaptured && window.Tracking) {
+          window.Tracking.trackDonateBrowser(
+            finalVal,
+            state.currency,
+            donateEventId
+          );
+        }
+        if (window.CheckoutMonitor) {
+          window.CheckoutMonitor.stage('done');
+        }
+        showStatus(formatSuccessMessage(captureData, orderToken), 'success');
+        if (captureData._recordedTransaction) {
+          openThankYouModal(captureData._recordedTransaction);
+        }
+      } catch (err) {
+        showStatus(
+          err?.message || 'Could not complete PayPal donation.',
+          'error'
+        );
+      }
+    }
+  }
+
   async function init() {
     updateSegmentedSlider();
     updateUI();
@@ -1224,6 +1338,7 @@
       if (window.Tracking) {
         await window.Tracking.init();
       }
+      await handlePayPalRedirectReturnIfPresent();
       await ensurePayPalSdkAndMount('capture');
     } catch (_err) {
       showStatus('Failed to load donation configuration.', 'error');
