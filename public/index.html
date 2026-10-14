@@ -217,10 +217,10 @@
                   </div>
                 </div>
 
-                <!-- Recurring Info Notice (Ye in ref_js_1.js — visible on Weekly / Monthly) -->
+                <!-- Recurring Info Notice (visible on Weekly / Monthly) -->
                 <p id="recurring-info" class="recurring-info" hidden></p>
 
-                <!-- Primary & Secondary Donate Buttons (exact reference UI + SDK integration) -->
+                <!-- Primary & Secondary Donate Buttons -->
                 <div id="donate-buttons-section">
                   <div class="mb-16 primary-btn-slot">
                     <button
@@ -429,141 +429,7 @@
       </div>
     </footer>
 
-    <!-- Floating Vault & Transactions Debug Trigger -->
-    <button
-      type="button"
-      id="debug-toggle-btn"
-      class="debug-fab-btn"
-      aria-label="Open Vault & Transactions Debugger"
-    >
-      <span class="debug-fab-dot" aria-hidden="true"></span>
-      <span class="debug-fab-text">Vault, Pixel &amp; Logs Debug</span>
-      <span id="debug-fab-count" class="debug-fab-badge">0</span>
-    </button>
-
-    <!-- Slide-Over Vault, Meta Pixel/CAPI & Server Logs Debug Drawer -->
-    <div id="debug-drawer-backdrop" class="debug-backdrop" hidden></div>
-    <aside
-      id="debug-drawer"
-      class="debug-drawer"
-      aria-label="PayPal Vault, Meta Pixel & Server Logs Debugger"
-      hidden
-    >
-      <div class="debug-drawer-header">
-        <div>
-          <div class="debug-eyebrow">
-            <span class="debug-live-pill">SANDBOX LIVE</span>
-            <span>PayPal Vault v3 · Meta CAPI · GeoIP</span>
-          </div>
-          <h2 class="debug-drawer-title">Vault, Pixel &amp; Server Console</h2>
-        </div>
-        <div class="debug-header-actions">
-          <button
-            type="button"
-            id="debug-refresh-btn"
-            class="debug-icon-btn"
-            title="Refresh telemetry and transactions"
-          >
-            Refresh
-          </button>
-          <button
-            type="button"
-            id="debug-close-btn"
-            class="debug-close-btn"
-            aria-label="Close debug drawer"
-          >
-            &times;
-          </button>
-        </div>
-      </div>
-
-      <div class="debug-drawer-body">
-        <div id="debug-alert-box" class="debug-alert-box" hidden></div>
-
-        <!-- Section A: Visitor Session, IP Geolocation & Meta Pixel / CAPI Status -->
-        <section class="debug-section">
-          <div class="debug-section-header">
-            <h3 class="debug-section-title">
-              Visitor GeoIP &amp; Meta Pixel / CAPI Telemetry
-            </h3>
-            <span id="debug-pixel-badge" class="debug-pill-count">ACTIVE</span>
-          </div>
-          <div id="debug-visitor-telemetry" class="debug-card"></div>
-        </section>
-
-        <!-- Section B: Live Server Journey Logs (TIME MKT DONOR STEP WHAT HAPPENED FLAGS) -->
-        <section class="debug-section">
-          <div class="debug-section-header">
-            <h3 class="debug-section-title">
-              Live Server Journey Logs (GFM Format)
-            </h3>
-            <span id="debug-logs-count" class="debug-pill-count">0 lines</span>
-          </div>
-          <pre id="debug-server-logs" class="debug-terminal-box">Loading server logs...</pre>
-        </section>
-
-        <!-- Section 0: Verified Sandbox Test Cards (1-Click Copy) -->
-        <section class="debug-section">
-          <div class="debug-section-header">
-            <h3 class="debug-section-title">
-              Verified Sandbox Test Cards (200 APPROVED)
-            </h3>
-            <span class="debug-pill-count">Click to Copy</span>
-          </div>
-          <div class="debug-cards-list" style="gap:8px">
-            <div class="debug-card" style="padding:10px 12px;display:flex;align-items:center;justify-content:space-between">
-              <div style="font-size:12px">
-                <strong style="color:#001435">Visa</strong> · <code>4111111111111111</code>
-                <span style="color:#64748b;margin-left:6px">Exp <code>12/28</code> · CVV <code>123</code></span>
-              </div>
-              <button type="button" class="debug-mini-link" data-copy-card="4111111111111111">Copy</button>
-            </div>
-            <div class="debug-card" style="padding:10px 12px;display:flex;align-items:center;justify-content:space-between">
-              <div style="font-size:12px">
-                <strong style="color:#001435">Mastercard</strong> · <code>5555555555554444</code>
-                <span style="color:#64748b;margin-left:6px">Exp <code>12/28</code> · CVV <code>123</code></span>
-              </div>
-              <button type="button" class="debug-mini-link" data-copy-card="5555555555554444">Copy</button>
-            </div>
-            <div class="debug-card" style="padding:10px 12px;display:flex;align-items:center;justify-content:space-between">
-              <div style="font-size:12px">
-                <strong style="color:#001435">Amex</strong> · <code>378282246310005</code>
-                <span style="color:#64748b;margin-left:6px">Exp <code>12/28</code> · CVV <code>1234</code></span>
-              </div>
-              <button type="button" class="debug-mini-link" data-copy-card="378282246310005">Copy</button>
-            </div>
-          </div>
-        </section>
-
-        <!-- Section 1: Active Vaulted Cards (MIT Rebillable) -->
-        <section class="debug-section">
-          <div class="debug-section-header">
-            <h3 class="debug-section-title">
-              Vaulted Recurring Cards (MIT Rebill)
-            </h3>
-            <span id="debug-vault-count" class="debug-pill-count">0 active</span>
-          </div>
-          <p class="debug-section-desc">
-            Cards vaulted via <code>store_in_vault: "ON_SUCCESS"</code>. Click
-            <strong>Rebill Vaulted Card Now</strong> to trigger an instant
-            merchant-initiated recurring charge (<code>POST /v2/checkout/orders</code>
-            with <code>vault_id</code>) with zero donor interaction.
-          </p>
-          <div id="debug-schedules-list" class="debug-cards-list"></div>
-        </section>
-
-        <!-- Section 2: Full Transaction & Capture Ledger -->
-        <section class="debug-section">
-          <div class="debug-section-header">
-            <h3 class="debug-section-title">Transaction &amp; Capture Ledger</h3>
-            <span id="debug-tx-count" class="debug-pill-count">0 total</span>
-          </div>
-          <div id="debug-transactions-list" class="debug-cards-list"></div>
-        </section>
-      </div>
-    </aside>
-
-    <!-- Thank You Celebration Receipt Modal Popup -->
+    <!-- Donor Celebration Receipt Modal Popup (Clean Consumer Receipt) -->
     <div
       id="thank-you-modal-backdrop"
       class="ty-modal-backdrop"
@@ -583,6 +449,7 @@
         </button>
 
         <div class="ty-check-wrap" aria-hidden="true">
+          <div class="ty-check-glow"></div>
           <svg class="ty-check-svg" viewBox="0 0 64 64" width="64" height="64">
             <circle
               class="ty-check-circle"
@@ -614,8 +481,8 @@
         </p>
 
         <div class="ty-amount-pill-wrap">
-          <span id="ty-modal-amount" class="ty-amount-pill">$1.00 USD / week</span>
-          <span id="ty-modal-type-badge" class="ty-type-badge">VAULTED WEEKLY</span>
+          <span id="ty-modal-amount" class="ty-amount-pill">$25.00 USD</span>
+          <span id="ty-modal-type-badge" class="ty-type-badge">ONE-TIME</span>
         </div>
 
         <div class="ty-receipt-box">
@@ -626,39 +493,24 @@
             >
           </div>
           <div class="ty-receipt-row">
-            <span class="ty-receipt-label">Capture ID</span>
+            <span class="ty-receipt-label">Transaction ID</span>
             <code id="ty-rcpt-capture" class="ty-receipt-code">N/A</code>
           </div>
           <div class="ty-receipt-row">
-            <span class="ty-receipt-label">PayPal Order ID</span>
+            <span class="ty-receipt-label">Reference ID</span>
             <code id="ty-rcpt-order" class="ty-receipt-code">N/A</code>
           </div>
           <div class="ty-receipt-row">
             <span class="ty-receipt-label">Payment Method</span>
             <span id="ty-rcpt-card" class="ty-receipt-val">PayPal</span>
           </div>
-          <div id="ty-rcpt-vault-row" class="ty-receipt-row" hidden>
-            <span class="ty-receipt-label">PayPal Vault Token</span>
-            <code id="ty-rcpt-vault" class="ty-receipt-code ty-code-vault">N/A</code>
-          </div>
-          <div id="ty-rcpt-capi-row" class="ty-receipt-row">
-            <span class="ty-receipt-label">Meta Pixel + CAPI</span>
-            <code id="ty-rcpt-capi" class="ty-receipt-code">M:OK</code>
-          </div>
           <div class="ty-receipt-row">
-            <span class="ty-receipt-label">Timestamp</span>
+            <span class="ty-receipt-label">Date</span>
             <span id="ty-rcpt-time" class="ty-receipt-val">Just now</span>
           </div>
         </div>
 
         <div class="ty-modal-actions">
-          <button
-            type="button"
-            id="ty-open-debug-btn"
-            class="pp-btn pp-btn-secondary btn-wide ty-action-btn"
-          >
-            Inspect &amp; Rebill in Vault Debugger
-          </button>
           <button
             type="button"
             id="ty-done-btn"

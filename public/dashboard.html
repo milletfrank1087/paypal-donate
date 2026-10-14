@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Donations &amp; Subscriptions Dashboard — Help my baby</title>
+    <link
+      rel="shortcut icon"
+      sizes="196x196"
+      href="https://www.paypalobjects.com/webstatic/icon/pp196.png"
+    />
+    <link
+      rel="stylesheet"
+      href="https://www.paypalobjects.com/paypal-ui/web/fonts-and-normalize/2-0-0/fonts-and-normalize.min.css"
+    />
+    <link rel="stylesheet" href="/dashboard.css" />
+  </head>
+  <body>
+    <header class="dash-topbar">
+      <div class="dash-topbar-inner">
+        <div class="dash-brand">
+          <img
+            src="https://www.paypalobjects.com/paypal-ui/logos/svg/paypal-mark-color.svg"
+            alt="PayPal"
+            class="dash-brand-logo"
+          />
+          <div>
+            <div class="dash-eyebrow">
+              <span id="dash-mode-badge" class="dash-mode-pill">SANDBOX</span>
+              <span>PayPal Orders v2 · Vault v3 MIT · Meta Donate CAPI</span>
+            </div>
+            <h1 class="dash-title">Help my baby — Operations &amp; Rebills Dashboard</h1>
+          </div>
+        </div>
+
+        <div class="dash-topbar-actions">
+          <a href="/" target="_blank" class="dash-btn dash-btn-ghost">
+            Open Live Donation Page &nearr;
+          </a>
+          <button type="button" id="open-create-sub-btn" class="dash-btn dash-btn-gold">
+            + Create Subscription
+          </button>
+          <button type="button" id="refresh-dash-btn" class="dash-btn dash-btn-secondary">
+            Refresh Data
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="dash-container">
+      <!-- Notification Banner -->
+      <div id="dash-alert" class="dash-alert" hidden></div>
+
+      <!-- KPI Summary Cards -->
+      <section class="dash-kpi-grid">
+        <div class="dash-kpi-card">
+          <span class="dash-kpi-label">Total Donated (Gross)</span>
+          <strong id="kpi-total-donated" class="dash-kpi-value">$0.00</strong>
+          <span id="kpi-net-subtext" class="dash-kpi-sub">Net after fees: $0.00</span>
+        </div>
+
+        <div class="dash-kpi-card">
+          <span class="dash-kpi-label">Active Subscriptions</span>
+          <strong id="kpi-active-subs" class="dash-kpi-value">0</strong>
+          <span id="kpi-mrr-subtext" class="dash-kpi-sub">Est. Run Rate: $0.00 / mo</span>
+        </div>
+
+        <div class="dash-kpi-card">
+          <span class="dash-kpi-label">MIT Rebills Captured</span>
+          <strong id="kpi-rebills-total" class="dash-kpi-value">$0.00</strong>
+          <span id="kpi-rebills-count" class="dash-kpi-sub">0 recurring charges</span>
+        </div>
+
+        <div class="dash-kpi-card">
+          <span class="dash-kpi-label">Meta Donate CAPI &amp; Visitors</span>
+          <strong id="kpi-visitors-count" class="dash-kpi-value">0 visitors</strong>
+          <span id="kpi-capi-subtext" class="dash-kpi-sub">Pixel + CAPI Active</span>
+        </div>
+      </section>
+
+      <!-- Main Two-Column Workspace -->
+      <div class="dash-main-grid">
+        <!-- Left Column: Subscriptions Management & Transactions Ledger -->
+        <div class="dash-col-primary">
+          <!-- Subscriptions Section -->
+          <section class="dash-panel">
+            <div class="dash-panel-header">
+              <div>
+                <h2 class="dash-panel-title">
+                  Recurring Subscriptions (PayPal Vault v3 MIT)
+                </h2>
+                <p class="dash-panel-subtitle">
+                  Trigger instant Merchant-Initiated Transaction (MIT) rebills, update amounts/cadence, pause, or remove vaulted subscriptions.
+                </p>
+              </div>
+              <div class="dash-filter-pills" id="sub-filter-group">
+                <button type="button" class="dash-pill is-active" data-sub-filter="ALL">All</button>
+                <button type="button" class="dash-pill" data-sub-filter="ACTIVE">Active</button>
+                <button type="button" class="dash-pill" data-sub-filter="PAUSED">Paused</button>
+              </div>
+            </div>
+
+            <div id="subscriptions-list" class="dash-list">
+              <div class="dash-empty">Loading subscriptions...</div>
+            </div>
+          </section>
+
+          <!-- Transactions & Rebills Ledger -->
+          <section class="dash-panel">
+            <div class="dash-panel-header">
+              <div>
+                <h2 class="dash-panel-title">Transactions &amp; Capture Ledger</h2>
+                <p class="dash-panel-subtitle">
+                  Complete history of initial donations (<code>Donate</code> CAPI) and subsequent recurring MIT rebills.
+                </p>
+              </div>
+              <div class="dash-filter-pills" id="tx-filter-group">
+                <button type="button" class="dash-pill is-active" data-tx-filter="ALL">All</button>
+                <button type="button" class="dash-pill" data-tx-filter="INITIAL">Initial Donations</button>
+                <button type="button" class="dash-pill" data-tx-filter="REBILL">MIT Rebills</button>
+              </div>
+            </div>
+
+            <div id="transactions-list" class="dash-list">
+              <div class="dash-empty">Loading transactions...</div>
+            </div>
+          </section>
+        </div>
+
+        <!-- Right Column: Live Server Journey Logs, CAPI Feed & Visitors GeoIP -->
+        <div class="dash-col-secondary">
+          <!-- Live Server Journey Logs -->
+          <section class="dash-panel">
+            <div class="dash-panel-header">
+              <div>
+                <h2 class="dash-panel-title">Live Server Journey Logs</h2>
+                <p class="dash-panel-subtitle">
+                  Real-time funnel stream (<code>TIME MKT DONOR STEP DETAILS</code>)
+                </p>
+              </div>
+              <span id="logs-count-badge" class="dash-count-badge">0 lines</span>
+            </div>
+            <pre id="server-logs-box" class="dash-terminal">Loading server logs...</pre>
+          </section>
+
+          <!-- Meta CAPI & TikTok Events Feed -->
+          <section class="dash-panel">
+            <div class="dash-panel-header">
+              <div>
+                <h2 class="dash-panel-title">Meta Donate CAPI &amp; Pixel Stream</h2>
+                <p class="dash-panel-subtitle">
+                  Server-side Conversions API events with deduplication IDs
+                </p>
+              </div>
+              <span id="capi-count-badge" class="dash-count-badge">0 events</span>
+            </div>
+            <div id="capi-events-list" class="dash-compact-list">
+              <div class="dash-empty">No CAPI events recorded yet.</div>
+            </div>
+          </section>
+
+          <!-- Active Visitor Sessions & GeoIP -->
+          <section class="dash-panel">
+            <div class="dash-panel-header">
+              <div>
+                <h2 class="dash-panel-title">Visitor GeoIP Sessions</h2>
+                <p class="dash-panel-subtitle">
+                  Offline MaxMind GeoIP resolution &amp; device detection
+                </p>
+              </div>
+              <span id="visitors-count-badge" class="dash-count-badge">0 visitors</span>
+            </div>
+            <div id="visitors-list" class="dash-compact-list">
+              <div class="dash-empty">No active visitors yet.</div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <!-- Create Subscription Modal -->
+    <div id="create-sub-modal" class="dash-modal-backdrop" hidden>
+      <div class="dash-modal-card">
+        <div class="dash-modal-header">
+          <div>
+            <h3 class="dash-modal-title">Create Recurring Subscription</h3>
+            <p class="dash-modal-subtitle">
+              Create a subscription by vaulting a card via PayPal Vault v3 or linking an existing Vault Token ID.
+            </p>
+          </div>
+          <button type="button" id="close-create-sub-btn" class="dash-modal-close">&times;</button>
+        </div>
+
+        <form id="create-sub-form" class="dash-form">
+          <div class="dash-mode-tabs">
+            <button
+              type="button"
+              class="dash-mode-tab is-active"
+              data-create-mode="card"
+            >
+              Vault New Card + Initial Charge
+            </button>
+            <button
+              type="button"
+              class="dash-mode-tab"
+              data-create-mode="vault"
+            >
+              Use Existing PayPal Vault ID
+            </button>
+          </div>
+
+          <input type="hidden" id="sub-create-mode" value="card" />
+
+          <div class="dash-form-row">
+            <div class="dash-form-group">
+              <label for="sub-donor-name">Donor Name</label>
+              <input
+                type="text"
+                id="sub-donor-name"
+                placeholder="Alex Mercer"
+                value="Alex Mercer"
+                required
+              />
+            </div>
+            <div class="dash-form-group">
+              <label for="sub-donor-email">Donor Email (optional)</label>
+              <input
+                type="email"
+                id="sub-donor-email"
+                placeholder="donor@example.com"
+              />
+            </div>
+          </div>
+
+          <div class="dash-form-row">
+            <div class="dash-form-group">
+              <label for="sub-amount">Recurring Amount (USD)</label>
+              <input
+                type="number"
+                id="sub-amount"
+                step="0.01"
+                min="1"
+                value="25.00"
+                required
+              />
+            </div>
+            <div class="dash-form-group">
+              <label for="sub-frequency">Billing Cadence</label>
+              <select id="sub-frequency">
+                <option value="WEEK">Weekly</option>
+                <option value="MONTH">Monthly</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Mode 1: New Card Fields -->
+          <div id="create-mode-card-fields">
+            <div class="dash-quick-fill">
+              <span>Quick-fill Sandbox Card:</span>
+              <button
+                type="button"
+                class="dash-mini-btn"
+                data-fill-card="4111111111111111"
+                data-fill-exp="2028-12"
+                data-fill-cvv="123"
+              >
+                Visa ••1111
+              </button>
+              <button
+                type="button"
+                class="dash-mini-btn"
+                data-fill-card="5555555555554444"
+                data-fill-exp="2028-12"
+                data-fill-cvv="123"
+              >
+                Mastercard ••4444
+              </button>
+              <button
+                type="button"
+                class="dash-mini-btn"
+                data-fill-card="378282246310005"
+                data-fill-exp="2028-12"
+                data-fill-cvv="1234"
+              >
+                Amex ••0005
+              </button>
+            </div>
+
+            <div class="dash-form-group">
+              <label for="sub-card-number">Card Number</label>
+              <input
+                type="text"
+                id="sub-card-number"
+                placeholder="4111111111111111"
+                value="4111111111111111"
+              />
+            </div>
+
+            <div class="dash-form-row">
+              <div class="dash-form-group">
+                <label for="sub-card-expiry">Expiry (YYYY-MM)</label>
+                <input
+                  type="text"
+                  id="sub-card-expiry"
+                  placeholder="2028-12"
+                  value="2028-12"
+                />
+              </div>
+              <div class="dash-form-group">
+                <label for="sub-card-cvv">CVV</label>
+                <input
+                  type="text"
+                  id="sub-card-cvv"
+                  placeholder="123"
+                  value="123"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- Mode 2: Existing Vault Token ID -->
+          <div id="create-mode-vault-fields" hidden>
+            <div class="dash-form-group">
+              <label for="sub-vault-id">PayPal Vault v3 Token ID</label>
+              <input
+                type="text"
+                id="sub-vault-id"
+                placeholder="e.g. 3ct01473ef209841a"
+              />
+            </div>
+            <div class="dash-form-row">
+              <div class="dash-form-group">
+                <label for="sub-card-brand">Card Brand</label>
+                <input type="text" id="sub-card-brand" value="VISA" />
+              </div>
+              <div class="dash-form-group">
+                <label for="sub-card-last4">Card Last 4</label>
+                <input type="text" id="sub-card-last4" value="1111" maxlength="4" />
+              </div>
+            </div>
+          </div>
+
+          <div class="dash-modal-footer">
+            <button
+              type="button"
+              id="cancel-create-sub-btn"
+              class="dash-btn dash-btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              id="submit-create-sub-btn"
+              class="dash-btn dash-btn-gold"
+            >
+              Create Subscription
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script src="/dashboard.js"></script>
+  </body>
+</html>

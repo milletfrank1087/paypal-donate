@@ -1,9 +1,6 @@
 /* ==========================================================================
    Exact CSS & Theme Tokens from https://www.paypal.com/donate/?hosted_button_id=V292EWM6PUM7J
-   Sources:
-   - https://www.paypalobjects.com/paypal-ui/web/fonts-and-normalize/2-0-0/fonts-and-normalize.min.css
-   - @paypalcorp/pp-react-theme (PayPalOpen-Regular, PayPalOpen-Bold, #001435, #003087, #f1ede8, #ffd140)
-   - ppvx-app.less (299.c1c426c83ac76df508bb.css)
+   + Refined Spring & Cubic-Bezier Micro-Animations
    ========================================================================== */
 
 *,
@@ -59,6 +56,13 @@ div.landing-page #donateWrapper {
   border-radius: 0.75rem; /* 12px */
   border: 1px solid #dbd8d0;
   position: relative;
+  box-shadow: 0 8px 30px rgba(0, 20, 53, 0.04);
+  animation: cardEntrance 0.48s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.3s ease;
+}
+
+#donateWrapper .donate_wrapper:focus-within {
+  box-shadow: 0 14px 40px rgba(0, 20, 53, 0.07);
 }
 
 /* Campaign Logo (#charityLogo) */
@@ -72,6 +76,7 @@ div.landing-page #donateWrapper {
   margin-right: auto;
   margin-top: 37px;
   margin-bottom: 24px;
+  animation: fadeSlideUp 0.42s cubic-bezier(0.16, 1, 0.3, 1) 0.04s both;
 }
 
 /* Subheader & Main Content Containers */
@@ -79,6 +84,7 @@ div.landing-page #donateWrapper {
   width: 100%;
   padding: 0px 80px;
   margin-top: 24px;
+  animation: fadeSlideUp 0.44s cubic-bezier(0.16, 1, 0.3, 1) 0.08s both;
 }
 
 .donate-main-content-with-no-margin {
@@ -133,6 +139,7 @@ h2#donation-name.org-name {
   width: 100%;
   padding: 0px 80px;
   margin-top: 24px;
+  animation: fadeSlideUp 0.46s cubic-bezier(0.16, 1, 0.3, 1) 0.12s both;
 }
 
 /* ==========================================================================
@@ -161,10 +168,11 @@ h2#donation-name.org-name {
   width: calc((100% - 0.75rem) / 3);
   background: #ffffff; /* sysColorPrimaryContrast */
   border-radius: 64rem;
-  box-shadow: 0 0.0625rem 0.75rem rgba(0, 0, 0, 0.08);
-  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1), width 0.2s cubic-bezier(0.2, 0, 0, 1);
+  box-shadow: 0 2px 10px rgba(0, 20, 53, 0.1), 0 0.5px 2px rgba(0, 20, 53, 0.06);
+  transition: transform 0.34s cubic-bezier(0.22, 1, 0.36, 1), width 0.25s cubic-bezier(0.22, 1, 0.36, 1);
   pointer-events: none;
   z-index: 0;
+  will-change: transform;
 }
 
 .segmented-controller-tab {
@@ -182,6 +190,11 @@ h2#donation-name.org-name {
   font-weight: 400;
   z-index: 1;
   -webkit-tap-highlight-color: transparent;
+  transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.segmented-controller-tab:active {
+  transform: scale(0.96);
 }
 
 .segmented-controller-tab:focus-visible {
@@ -205,6 +218,11 @@ h2#donation-name.org-name {
   border-radius: inherit;
   color: #545d68; /* sysColorBackgroundMediumContrast */
   pointer-events: none;
+  transition: color 0.22s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.segmented-controller-tab:hover:not([aria-selected="true"]) .segmented-controller-tab-title {
+  color: #001435;
 }
 
 .segmented-controller-tab[aria-selected="true"] {
@@ -267,8 +285,9 @@ div.amount-wrapper div.no-error div[data-ppui-info^="hero-currency"] > div:first
   transform-origin: center;
   scale: 0.6875; /* 44 / 64 exact scale from pp-react-hero-currency */
   pointer-events: none;
-  transition: scale 200ms ease-in-out;
+  transition: scale 0.3s cubic-bezier(0.22, 1, 0.36, 1), color 0.2s ease;
   user-select: none;
+  will-change: scale, transform;
 }
 
 .hero-currency-view > span {
@@ -305,12 +324,13 @@ div.amount-wrapper div.no-error div[data-ppui-info^="hero-currency"] > div:first
 }
 
 .hero-currency-base.is-focused .hero-currency-entered::after {
-  border-right-color: #001435;
+  border-right-color: #0070e0;
   animation: ppHeroCaretBlink 1s step-start infinite;
 }
 
 .hero-currency-implied {
   color: #001435;
+  transition: color 0.2s ease;
 }
 
 .hero-currency-base.is-focused .hero-currency-implied.is-fraction-placeholder {
@@ -358,6 +378,7 @@ div.amount-wrapper div.no-error div[data-ppui-info^="hero-currency"] > div:first
   font-size: 0.875rem; /* 14px */
   line-height: 1.25rem; /* 20px */
   color: #545d68;
+  animation: errorShake 0.38s cubic-bezier(0.36, 0.07, 0.19, 0.97);
 }
 
 .hero-currency-error[hidden] {
@@ -395,7 +416,7 @@ div.checkbox-bottom-margin {
 .pp-checkbox-label {
   cursor: pointer;
   display: block;
-  padding-inline-start: 2.375rem; /* 1.5rem + 0.75rem + 0.125rem = 38px */
+  padding-inline-start: 2.375rem; /* 38px */
   position: relative;
   text-align: start;
   font-family: PayPalOpen-Regular, "Helvetica Neue", Arial, sans-serif;
@@ -408,7 +429,7 @@ div.checkbox-bottom-margin {
 
 .pp-checkbox-box {
   border-radius: 0.25rem; /* 4px */
-  border: 0.0625rem solid #929496; /* sysColorStructureBorderHighContrast */
+  border: 0.0625rem solid #929496;
   box-sizing: border-box;
   height: 1.5rem; /* 24px */
   width: 1.5rem; /* 24px */
@@ -419,22 +440,36 @@ div.checkbox-bottom-margin {
   display: flex;
   justify-content: center;
   align-items: center;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition:
+    background-color 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.2s ease;
+}
+
+.pp-checkbox-label:hover .pp-checkbox-box {
+  border-color: #0070e0;
+  box-shadow: 0 0 0 3px rgba(0, 112, 224, 0.08);
 }
 
 .pp-checkbox-check {
-  display: none;
+  display: inline-flex;
   line-height: 1;
+  opacity: 0;
+  transform: scale(0.4);
+  transition: opacity 0.16s ease, transform 0.24s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .pp-checkbox-input:checked + .pp-checkbox-label .pp-checkbox-box {
-  border-color: #0070e0; /* sysColorSelectedMain */
+  border-color: #0070e0;
   background-color: #0070e0;
   color: #ffffff;
+  animation: checkBounce 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .pp-checkbox-input:checked + .pp-checkbox-label .pp-checkbox-check {
-  display: inline-flex;
+  opacity: 1;
+  transform: scale(1);
 }
 
 .pp-checkbox-input:focus-visible + .pp-checkbox-label .pp-checkbox-box {
@@ -450,6 +485,13 @@ div.checkbox-bottom-margin {
 .pp-checkbox-text strong {
   font-family: PayPalOpen-Bold, "Helvetica Neue", Arial, sans-serif;
   font-weight: 400;
+  display: inline-block;
+  transition: color 0.22s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pp-checkbox-text strong.is-fee-updated {
+  color: #0070e0;
+  transform: scale(1.06);
 }
 
 /* Recurring Disclaimer Text (.recurring-info) */
@@ -484,10 +526,15 @@ button.pp-btn {
   text-align: center;
   text-decoration: none;
   font-family: PayPalOpen-Bold, "Helvetica Neue", Arial, sans-serif;
-  font-size: 1.125rem; /* 18px (sysTypographyButtonLgSize) */
+  font-size: 1.125rem; /* 18px */
   line-height: 1.5rem; /* 24px */
   font-weight: 400;
-  transition: color 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
+  transition:
+    color 0.2s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    transform 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.2s cubic-bezier(0.22, 1, 0.36, 1);
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -504,26 +551,25 @@ button.next-button {
 }
 
 button.next-button:hover,
-button.next-button:focus,
-button.next-button:active {
-  background-color: #ffe888;
+button.next-button:focus {
+  background-color: #ffe270;
   color: #001435;
 }
 
 button.pp-btn-secondary {
   background: transparent;
-  border: 0.125rem solid #003087; /* 2px solid sysColorPrimaryMain */
+  border: 0.125rem solid #003087;
   color: #003087;
 }
 
 button.pp-btn-secondary:hover {
-  background: transparent;
+  background: rgba(0, 112, 224, 0.04);
   color: #0070e0;
   border-color: #0070e0;
 }
 
 button.pp-btn-secondary:active {
-  background: transparent;
+  background: rgba(0, 28, 100, 0.06);
   color: #001c64;
   border-color: #001c64;
 }
@@ -566,17 +612,19 @@ button.pp-btn-secondary:active {
   gap: 2px;
   background: none;
   border: none;
-  padding: 0;
+  padding: 2px 6px 2px 0;
+  border-radius: 6px;
   color: #0070e0;
   font-family: PayPalOpen-Bold, "Helvetica Neue", Arial, sans-serif;
   font-size: 0.875rem;
   line-height: 1.25rem;
   cursor: pointer;
+  transition: color 0.18s ease, transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .card-drawer-back:hover {
   color: #003087;
-  text-decoration: underline;
+  transform: translateX(-2px);
 }
 
 .minimal-card-badge {
@@ -605,10 +653,13 @@ button.pp-btn-secondary:active {
   font-size: 0.875rem; /* 14px */
   line-height: 1.25rem;
   color: #545d68;
+  transition: color 0.18s ease;
 }
 
-/* PayPal CardFields injects an iframe with an internal ~6-7px margin around its <input>.
-   Negative margin + calc width makes the inner <input> border align flush with the 456px column. */
+.card-field-group:focus-within .card-field-label {
+  color: #003087;
+}
+
 .card-hosted-field {
   width: calc(100% + 14px);
   margin: -6px -7px;
@@ -623,18 +674,6 @@ button.pp-btn-secondary:active {
   margin-top: 8px;
 }
 
-.recurring-card-note {
-  margin: 0 0 12px;
-  font-size: 0.875rem;
-  line-height: 1.25rem;
-  color: #545d68;
-}
-
-.switch-onetime-btn {
-  margin-top: 10px;
-  font-size: 0.9375rem !important;
-}
-
 /* Status Banner */
 .status-banner {
   margin-top: 16px;
@@ -643,6 +682,7 @@ button.pp-btn-secondary:active {
   font-size: 14px;
   line-height: 20px;
   text-align: left;
+  animation: fadeSlideUp 0.26s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .status-banner.is-success {
@@ -655,10 +695,11 @@ button.pp-btn-secondary:active {
   background-color: #fdf2f2;
   border: 1px solid #f5bcbc;
   color: #842029;
+  animation: errorShake 0.38s cubic-bezier(0.36, 0.07, 0.19, 0.97);
 }
 
 /* ==========================================================================
-   Exact Reference Footer (footer & .footer_container from ppvx-app.less)
+   Exact Reference Footer
    ========================================================================== */
 footer {
   height: 8rem;
@@ -703,10 +744,12 @@ footer {
   font-size: 14px;
   text-decoration: none;
   display: inline-block;
+  transition: color 0.15s ease;
 }
 
 .footer_d_one ul a:hover,
 .footer_d_two ul a:hover {
+  color: #0070e0;
   text-decoration: underline;
 }
 
@@ -750,13 +793,24 @@ footer {
 }
 
 /* ==========================================================================
-   Micro-Animations, Transitions, Thank You Popup & Vault Debug Console
+   Micro-Animations, Keyframes & Donor Celebration Receipt Modal
    ========================================================================== */
+
+@keyframes cardEntrance {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
 
 @keyframes fadeSlideUp {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
@@ -769,10 +823,34 @@ footer {
     transform: scale(1);
   }
   45% {
-    transform: scale(1.045);
+    transform: scale(1.055);
   }
   100% {
     transform: scale(1);
+  }
+}
+
+@keyframes checkBounce {
+  0% {
+    transform: scale(0.86);
+  }
+  55% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes errorShake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  20%, 60% {
+    transform: translateX(-5px);
+  }
+  40%, 80% {
+    transform: translateX(5px);
   }
 }
 
@@ -800,10 +878,19 @@ footer {
   }
 }
 
+@keyframes backdropFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @keyframes modalSpringIn {
   0% {
     opacity: 0;
-    transform: translateY(18px) scale(0.94);
+    transform: translateY(22px) scale(0.93);
   }
   100% {
     opacity: 1;
@@ -811,74 +898,62 @@ footer {
   }
 }
 
-@keyframes pulseHighlight {
+@keyframes radialGlowPulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.45);
-    border-color: #16a34a;
+    transform: scale(0.8);
+    opacity: 0.65;
   }
   100% {
-    box-shadow: 0 0 0 10px rgba(22, 163, 74, 0);
+    transform: scale(1.45);
+    opacity: 0;
   }
-}
-
-/* Smooth entrance for the main donation card */
-#donateWrapper .donate_wrapper {
-  animation: fadeSlideUp 0.38s cubic-bezier(0.22, 1, 0.36, 1);
-  transition: box-shadow 0.25s ease;
 }
 
 /* Digit pulse when typing into HeroCurrency */
 .hero-currency-view.is-pulsing {
-  animation: heroPop 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: heroPop 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 /* Smooth reveal for recurring period & info disclaimer */
 .recurring-period-sublabel:not([hidden]),
 .recurring-info:not([hidden]) {
-  animation: fadeSlideUp 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: fadeSlideUp 0.26s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Tactile button hover & active states */
-.pp-btn {
-  transition:
-    background-color 0.18s ease,
-    border-color 0.18s ease,
-    transform 0.14s cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 0.18s ease;
-}
-
 .pp-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 20, 53, 0.09);
+  transform: translateY(-1.5px);
+  box-shadow: 0 6px 16px rgba(0, 20, 53, 0.11);
 }
 
 .pp-btn:active:not(:disabled) {
-  transform: translateY(0) scale(0.99);
+  transform: translateY(0) scale(0.985);
+  box-shadow: 0 2px 6px rgba(0, 20, 53, 0.06);
 }
 
 /* Smooth transition for switching between Primary Buttons and Card Drawer */
 #donate-buttons-section:not([hidden]) {
-  animation: fadeSlideUp 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: fadeSlideUp 0.26s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .minimal-card-drawer:not([hidden]) {
-  animation: fadeSlideUp 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: fadeSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .minimal-card-drawer:not([hidden]) .card-field-group {
-  animation: fadeSlideUp 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: fadeSlideUp 0.34s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .minimal-card-drawer:not([hidden]) .card-field-row .card-field-group:nth-child(1) {
-  animation-delay: 0.04s;
+  animation-delay: 0.045s;
 }
 
 .minimal-card-drawer:not([hidden]) .card-field-row .card-field-group:nth-child(2) {
-  animation-delay: 0.08s;
+  animation-delay: 0.09s;
 }
 
 .minimal-card-drawer:not([hidden]) .card-submit-btn {
-  animation: fadeSlideUp 0.34s cubic-bezier(0.22, 1, 0.36, 1) 0.1s both;
+  animation: fadeSlideUp 0.36s cubic-bezier(0.16, 1, 0.3, 1) 0.13s both;
 }
 
 .btn-spinner {
@@ -894,416 +969,31 @@ footer {
 }
 
 /* ==========================================================================
-   Floating Vault & Rebill Debug Button & Slide-Over Console
-   ========================================================================== */
-.debug-fab-btn {
-  position: fixed;
-  right: 20px;
-  bottom: 20px;
-  z-index: 950;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: #001435;
-  color: #ffffff;
-  font-family: PayPalOpen-Bold, "Helvetica Neue", Arial, sans-serif;
-  font-size: 13px;
-  line-height: 18px;
-  cursor: pointer;
-  box-shadow: 0 8px 24px rgba(0, 20, 53, 0.28);
-  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.18s ease, background-color 0.18s ease;
-}
-
-.debug-fab-btn:hover {
-  transform: translateY(-2px);
-  background: #002259;
-  box-shadow: 0 12px 28px rgba(0, 20, 53, 0.36);
-}
-
-.debug-fab-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #22c55e;
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
-}
-
-.debug-fab-badge {
-  background: #ffd140;
-  color: #001435;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 1px 7px;
-  border-radius: 999px;
-}
-
-.debug-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 980;
-  background: rgba(0, 20, 53, 0.42);
-  backdrop-filter: blur(2px);
-  animation: fadeSlideUp 0.18s ease;
-}
-
-.debug-drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 990;
-  width: 100%;
-  max-width: 480px;
-  background: #f8fafc;
-  border-left: 1px solid #cbd2d6;
-  box-shadow: -12px 0 36px rgba(0, 20, 53, 0.2);
-  display: flex;
-  flex-direction: column;
-  animation: fadeSlideUp 0.22s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.debug-drawer-header {
-  padding: 18px 20px;
-  background: #001435;
-  color: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.debug-eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: #cbd5e1;
-  margin-bottom: 4px;
-}
-
-.debug-live-pill {
-  background: rgba(34, 197, 94, 0.2);
-  color: #4ade80;
-  border: 1px solid rgba(74, 222, 128, 0.4);
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-
-.debug-drawer-title {
-  margin: 0;
-  font-family: PayPalOpen-Bold, "Helvetica Neue", Arial, sans-serif;
-  font-size: 18px;
-  line-height: 24px;
-  color: #ffffff;
-}
-
-.debug-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.debug-icon-btn {
-  background: rgba(255, 255, 255, 0.12);
-  color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 6px;
-  padding: 5px 10px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.debug-icon-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.debug-close-btn {
-  background: none;
-  border: none;
-  color: #ffffff;
-  font-size: 26px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 4px;
-}
-
-.debug-drawer-body {
-  padding: 18px 20px 32px;
-  overflow-y: auto;
-  flex: 1;
-}
-
-.debug-alert-box {
-  margin-bottom: 14px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  font-size: 13px;
-  line-height: 18px;
-  animation: fadeSlideUp 0.2s ease;
-}
-
-.debug-alert-box.is-success {
-  background: #dcfce7;
-  border: 1px solid #86efac;
-  color: #14532d;
-}
-
-.debug-alert-box.is-error {
-  background: #fee2e2;
-  border: 1px solid #fca5a5;
-  color: #7f1d1d;
-}
-
-.debug-section {
-  margin-bottom: 24px;
-}
-
-.debug-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-
-.debug-section-title {
-  margin: 0;
-  font-family: PayPalOpen-Bold, "Helvetica Neue", Arial, sans-serif;
-  font-size: 14px;
-  color: #001435;
-}
-
-.debug-pill-count {
-  background: #e2e8f0;
-  color: #1e293b;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 999px;
-}
-
-.debug-section-desc {
-  margin: 0 0 12px;
-  font-size: 12px;
-  line-height: 17px;
-  color: #545d68;
-}
-
-.debug-cards-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.debug-card {
-  background: #ffffff;
-  border: 1px solid #cbd2d6;
-  border-radius: 10px;
-  padding: 14px;
-  box-shadow: 0 2px 6px rgba(0, 20, 53, 0.04);
-}
-
-.debug-card.is-new-rebill {
-  animation: pulseHighlight 1.4s ease-out;
-}
-
-.debug-card-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.debug-badge-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.debug-tag {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.debug-tag.is-vaulted {
-  background: #dbeafe;
-  color: #1d4ed8;
-}
-
-.debug-tag.is-initial {
-  background: #e0e7ff;
-  color: #3730a3;
-}
-
-.debug-tag.is-rebill {
-  background: #fef3c7;
-  color: #b45309;
-}
-
-.debug-tag.is-completed {
-  background: #dcfce7;
-  color: #15803d;
-}
-
-.debug-amount-strong {
-  font-family: PayPalOpen-Bold, "Helvetica Neue", Arial, sans-serif;
-  font-size: 15px;
-  color: #001435;
-}
-
-.debug-meta-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px 10px;
-  font-size: 12px;
-  color: #545d68;
-  margin-bottom: 10px;
-}
-
-.debug-meta-item strong {
-  color: #001435;
-  display: block;
-  font-size: 11px;
-}
-
-.debug-meta-item code {
-  font-size: 11px;
-  color: #0f172a;
-  background: #f1f5f9;
-  padding: 1px 4px;
-  border-radius: 3px;
-  word-break: break-all;
-}
-
-.debug-rebill-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-top: 10px;
-  border-top: 1px dashed #e2e8f0;
-}
-
-.debug-rebill-input-wrap {
-  display: flex;
-  align-items: center;
-  background: #f8fafc;
-  border: 1px solid #929496;
-  border-radius: 6px;
-  padding: 0 8px;
-  height: 34px;
-  width: 105px;
-  font-size: 13px;
-  color: #001435;
-}
-
-.debug-rebill-input-wrap input {
-  border: none;
-  background: transparent;
-  width: 100%;
-  font-size: 13px;
-  color: #001435;
-  outline: none;
-  margin-left: 3px;
-}
-
-.debug-rebill-btn {
-  flex: 1;
-  height: 34px;
-  border-radius: 999px;
-  border: none;
-  background: #ffd140;
-  color: #001435;
-  font-family: PayPalOpen-Bold, "Helvetica Neue", Arial, sans-serif;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background-color 0.15s ease, transform 0.12s ease;
-}
-
-.debug-rebill-btn:hover:not(:disabled) {
-  background: #ffda63;
-  transform: translateY(-1px);
-}
-
-.debug-rebill-btn:disabled {
-  opacity: 0.6;
-  cursor: wait;
-}
-
-.debug-mini-link {
-  background: none;
-  border: 1px solid #cbd2d6;
-  border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 11px;
-  color: #0062d1;
-  cursor: pointer;
-}
-
-.debug-mini-link:hover {
-  background: #f1f5f9;
-}
-
-.debug-terminal-box {
-  margin: 0;
-  padding: 10px 12px;
-  background: #0f172a;
-  color: #e2e8f0;
-  border-radius: 8px;
-  border: 1px solid #1e293b;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
-  line-height: 1.55;
-  overflow-x: auto;
-  max-height: 190px;
-  overflow-y: auto;
-  white-space: pre;
-}
-
-.debug-capi-pill {
-  display: inline-block;
-  margin: 3px 4px 0 0;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
-  color: #1d4ed8;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 10px;
-}
-
-/* ==========================================================================
    Thank You Celebration Receipt Modal Popup
    ========================================================================== */
 .ty-modal-backdrop {
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: rgba(0, 20, 53, 0.55);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 20, 53, 0.52);
+  backdrop-filter: blur(5px);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 16px;
+  animation: backdropFadeIn 0.22s ease;
 }
 
 .ty-modal-card {
   position: relative;
   width: 100%;
-  max-width: 440px;
+  max-width: 430px;
   background: #ffffff;
-  border-radius: 18px;
-  padding: 28px 26px 24px;
+  border-radius: 20px;
+  padding: 30px 26px 24px;
   text-align: center;
-  box-shadow: 0 24px 60px rgba(0, 20, 53, 0.28);
-  animation: modalSpringIn 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+  box-shadow: 0 24px 64px rgba(0, 20, 53, 0.26);
+  animation: modalSpringIn 0.38s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .ty-modal-close {
@@ -1319,17 +1009,29 @@ footer {
   line-height: 1;
   color: #545d68;
   cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.15s ease;
 }
 
 .ty-modal-close:hover {
   background: #e2e8f0;
   color: #001435;
+  transform: scale(1.06);
 }
 
 .ty-check-wrap {
-  margin: 0 auto 12px;
+  position: relative;
+  margin: 0 auto 14px;
   width: 64px;
   height: 64px;
+}
+
+.ty-check-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(22, 163, 74, 0.24);
+  animation: radialGlowPulse 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.15s forwards;
+  pointer-events: none;
 }
 
 .ty-check-circle {
@@ -1387,7 +1089,7 @@ footer {
 .ty-type-badge {
   font-size: 10px;
   font-weight: 700;
-  padding: 2px 7px;
+  padding: 2px 8px;
   border-radius: 999px;
   background: #dbeafe;
   color: #1d4ed8;
@@ -1407,7 +1109,7 @@ footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 0;
+  padding: 7px 0;
   font-size: 13px;
   border-bottom: 1px solid #eef2f6;
 }
@@ -1438,12 +1140,6 @@ footer {
   color: #0f172a;
 }
 
-.ty-code-vault {
-  background: #eff6ff;
-  border-color: #bfdbfe;
-  color: #1d4ed8;
-}
-
 .ty-modal-actions {
   display: flex;
   flex-direction: column;
@@ -1455,7 +1151,7 @@ footer {
 }
 
 /* ==========================================================================
-   Exact Responsive Media Queries from ppvx-app.less (ref_css_1.css)
+   Exact Responsive Media Queries from ppvx-app.less
    ========================================================================== */
 @media only screen and (max-width: 735px) {
   .footer-row-top {
@@ -1488,6 +1184,7 @@ footer {
   #donateWrapper .donate_wrapper {
     border: 0px;
     border-radius: 0px;
+    box-shadow: none;
   }
 
   .donate-main-content,
