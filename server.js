@@ -1946,3 +1946,8 @@ app.listen(PORT, async () => {
     }
   }, 15 * 60 * 1000).unref();
 });
+
+process.on('SIGTERM', () => {
+  process.exit(0);
+});
+
