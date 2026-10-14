@@ -764,11 +764,18 @@
         }
       }
 
-      // 3. Mount Express Digital Wallets (Google Pay & Apple Pay) when eligible
-      await Promise.allSettled([
-        mountGooglePayWallet(paypal),
-        mountApplePayWallet(paypal),
-      ]);
+      // 3. Mount Express Digital Wallets:
+      // Prefer native Apple Pay on Apple devices; only mount Google Pay on non-iOS devices when Apple Pay isn't mounted.
+      const applePayMounted = await mountApplePayWallet(paypal);
+      const isIosDevice =
+        /iPad|iPhone|iPod/i.test(navigator.userAgent || '') ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (!applePayMounted && !isIosDevice) {
+        await mountGooglePayWallet(paypal);
+      } else {
+        const gpContainer = document.getElementById('google-pay-button-container');
+        if (gpContainer) gpContainer.hidden = true;
+      }
     } catch (err) {
       const errMsg = err?.message || 'Unable to initialize PayPal SDK.';
       showStatus(errMsg, 'error');
@@ -924,14 +931,14 @@
       !window.ApplePaySession ||
       typeof paypal.Applepay !== 'function'
     ) {
-      return;
+      return false;
     }
 
     try {
-      if (!window.ApplePaySession.canMakePayments()) return;
+      if (!window.ApplePaySession.canMakePayments()) return false;
       const applepay = paypal.Applepay();
       const apConfig = await applepay.config();
-      if (!apConfig?.isEligible) return;
+      if (!apConfig?.isEligible) return false;
 
       container.innerHTML = `
         <button type="button" id="apple-pay-donate-btn" class="apple-pay-wallet-btn" aria-label="Donate with Apple Pay">
@@ -1073,8 +1080,10 @@
 
         session.begin();
       });
+      return true;
     } catch (_err) {
       // keep hidden if Apple Pay is unavailable
+      return false;
     }
   }
 
