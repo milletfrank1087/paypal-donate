@@ -201,7 +201,8 @@ app.get('/.well-known/apple-developer-merchantid-domain-association', (_req, res
     'apple-developer-merchantid-domain-association'
   );
   if (fs.existsSync(filePath)) {
-    res.type('text/plain').sendFile(filePath);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.sendFile(filePath);
   } else {
     res.status(404).end();
   }
