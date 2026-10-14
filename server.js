@@ -244,6 +244,27 @@ async function getAccessToken() {
   return cachedToken;
 }
 
+async function generateUserIdToken() {
+  try {
+    const credentials = Buffer.from(
+      `${PAYPAL_CLIENT_ID}:${PAYPAL_CLIENT_SECRET}`
+    ).toString('base64');
+    const response = await fetch(`${PAYPAL_API_BASE}/v1/oauth2/token`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: 'grant_type=client_credentials&response_type=id_token',
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.id_token || null;
+  } catch (_err) {
+    return null;
+  }
+}
+
 /**
  * Exact PayPal Donate gross-up fee formula:
  * fee = amount > 0 ? (amount + flatFee) / (1 - feeRate / 100) - amount : 0
@@ -265,19 +286,22 @@ function computeFinalAmount(rawAmount, coverFees) {
 }
 
 // Public config endpoint for the frontend SDK loader
-app.get('/api/config', (req, res) => {
+app.get('/api/config', async (req, res) => {
   const clientInfo = getClientInfo(req);
   const { visitor } = getOrCreateVisitor(
     clientInfo.ipAddress,
     clientInfo.clientLocation,
     clientInfo.userAgent
   );
+  const userIdToken = await generateUserIdToken();
   res.json({
     clientId: PAYPAL_CLIENT_ID,
+    userIdToken,
     mode: PAYPAL_MODE,
     currency: 'USD',
     feeRatePercent: FEE_RATE_PERCENT,
     flatFee: FLAT_FEE,
+    supabaseConfigured: isSupabaseConfigured(),
     visitorId: visitor.id,
     ipAddress: clientInfo.ipAddress,
     device: clientInfo.device,
@@ -623,6 +647,28 @@ app.post('/api/orders', async (req, res) => {
           },
         },
       };
+    } else if (fundingSource === 'paypal' && isRecurring) {
+      delete orderPayload.application_context;
+      const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+      const hostUrl = `${proto}://${req.get('host')}`;
+      orderPayload.payment_source = {
+        paypal: {
+          experience_context: {
+            brand_name: 'Help my baby',
+            shipping_preference: 'NO_SHIPPING',
+            user_action: 'PAY_NOW',
+            return_url: `${hostUrl}/?paypal_return=1`,
+            cancel_url: `${hostUrl}/?paypal_cancel=1`,
+          },
+          attributes: {
+            vault: {
+              store_in_vault: 'ON_SUCCESS',
+              usage_type: 'MERCHANT',
+              customer_type: 'CONSUMER',
+            },
+          },
+        },
+      };
     }
 
     const response = await fetch(`${PAYPAL_API_BASE}/v2/checkout/orders`, {
@@ -816,6 +862,7 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
     const vaultInfo =
       paymentSourceObj.card?.attributes?.vault ||
       cardObj?.attributes?.vault ||
+      paymentSourceObj.paypal?.attributes?.vault ||
       null;
     const netRef = captureObj?.network_transaction_reference || {};
     const nowIso = new Date().toISOString();
@@ -832,12 +879,18 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
       ? `${paymentSourceObj.paypal.name.given_name} ${
           paymentSourceObj.paypal.name.surname || ''
         }`.trim()
-      : paymentSourceObj.google_pay?.name || '';
+      : paymentSourceObj.apple_pay?.name ||
+        paymentSourceObj.google_pay?.name ||
+        '';
     const resolvedDonorName =
       [cardObj.name, donorName, payerName]
         .map((n) => String(n || '').trim())
-        .find((n) => n && !/^(=|-|—|unknown|null|undefined)$/i.test(n)) ||
-      'Generous Supporter';
+        .find(
+          (n) =>
+            n &&
+            n !== 'Generous Supporter' &&
+            !/^(=|-|—|unknown|null|undefined)$/i.test(n)
+        ) || 'Generous Supporter';
     const resolvedEmail =
       donorEmail ||
       data?.payer?.email_address ||
@@ -860,6 +913,7 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
         vaultId: vaultInfo.id,
         vaultStatus: vaultInfo.status || 'VAULTED',
         customerId: vaultInfo?.customer?.id || visitor.id,
+        paymentMethod: resolvedPaymentSource,
         donorName: resolvedDonorName,
         donorEmail: resolvedEmail,
         visitorId: visitor.id,
@@ -869,13 +923,20 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
         frequency,
         amount: capturedAmount,
         currency: 'USD',
-        cardBrand: cardObj.brand || 'VISA',
-        cardLast4: cardObj.last_digits || '1111',
+        cardBrand:
+          cardObj.brand ||
+          (resolvedPaymentSource === 'paypal' ? 'PAYPAL' : 'VISA'),
+        cardLast4:
+          cardObj.last_digits ||
+          (resolvedPaymentSource === 'paypal' ? 'PP' : '1111'),
         cardExpiry: cardObj.expiry || '',
         initialOrderId: data.id,
         initialCaptureId: captureObj.id || null,
         lastNetworkReferenceId: netRef.id || null,
-        networkName: netRef.network || cardObj.brand || 'VISA',
+        networkName:
+          netRef.network ||
+          cardObj.brand ||
+          (resolvedPaymentSource === 'paypal' ? 'PAYPAL' : 'VISA'),
         utmCampaign,
         utmSource,
         utmMedium,
@@ -1133,13 +1194,12 @@ function buildDashboardData() {
       pausedSubscriptions += 1;
     } else if (st === 'CANCELLED') {
       cancelledSubscriptions += 1;
-    } else {
+    } else if (s.frequency === 'WEEK') {
       activeSubscriptions += 1;
-      if (s.frequency === 'WEEK') {
-        weeklyRecurringVolume += amt;
-      } else if (s.frequency === 'MONTH') {
-        monthlyRecurringVolume += amt;
-      }
+      weeklyRecurringVolume += amt;
+    } else if (s.frequency === 'MONTH') {
+      activeSubscriptions += 1;
+      monthlyRecurringVolume += amt;
     }
   });
 
@@ -1596,6 +1656,10 @@ app.post('/api/vault/charge', async (req, res) => {
 
     const accessToken = await getAccessToken();
 
+    const isPayPalWalletVault =
+      matchedSchedule?.paymentMethod === 'paypal' ||
+      matchedSchedule?.cardBrand === 'PAYPAL';
+
     const storedCredential = {
       payment_initiator: 'MERCHANT',
       payment_type: 'RECURRING',
@@ -1607,6 +1671,19 @@ app.post('/api/vault/charge', async (req, res) => {
         network: prevNetBrand,
       };
     }
+
+    const paymentSourcePayload = isPayPalWalletVault
+      ? {
+          paypal: {
+            vault_id: targetVaultId,
+          },
+        }
+      : {
+          card: {
+            vault_id: targetVaultId,
+            stored_credential: storedCredential,
+          },
+        };
 
     const response = await fetch(`${PAYPAL_API_BASE}/v2/checkout/orders`, {
       method: 'POST',
@@ -1629,12 +1706,7 @@ app.post('/api/vault/charge', async (req, res) => {
             },
           },
         ],
-        payment_source: {
-          card: {
-            vault_id: targetVaultId,
-            stored_credential: storedCredential,
-          },
-        },
+        payment_source: paymentSourcePayload,
       }),
     });
 
@@ -1833,4 +1905,44 @@ app.listen(PORT, async () => {
       JourneyLog.system('⚠️', `Supabase hydration error: ${sbErr.message}`);
     }
   }
+
+  // Automatic Background Recurring Scheduler (checks every 15 minutes for due ACTIVE Weekly/Monthly schedules)
+  setInterval(async () => {
+    try {
+      const store = loadStore();
+      const nowMs = Date.now();
+      for (const s of store.schedules || []) {
+        if ((s.status || 'ACTIVE').toUpperCase() !== 'ACTIVE') continue;
+        if (s.frequency !== 'WEEK' && s.frequency !== 'MONTH') continue;
+        if (!s.vaultId) continue;
+
+        const lastTime = new Date(s.lastBilledAt || s.createdAt || 0).getTime();
+        if (!Number.isFinite(lastTime) || lastTime <= 0) continue;
+
+        const intervalMs =
+          s.frequency === 'WEEK'
+            ? 7 * 24 * 60 * 60 * 1000
+            : 30 * 24 * 60 * 60 * 1000;
+
+        if (nowMs - lastTime >= intervalMs) {
+          JourneyLog.system(
+            '⏰',
+            `Auto-billing due ${s.frequency} schedule ${s.scheduleId} (${s.donorName} · $${s.amount})`
+          );
+          await fetch(`http://127.0.0.1:${PORT}/api/vault/charge`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              scheduleId: s.scheduleId,
+              vaultId: s.vaultId,
+              amount: s.amount,
+              frequency: s.frequency,
+            }),
+          });
+        }
+      }
+    } catch (schedErr) {
+      JourneyLog.system('⚠️', `Auto-scheduler error: ${schedErr.message}`);
+    }
+  }, 15 * 60 * 1000).unref();
 });

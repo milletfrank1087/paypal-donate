@@ -455,6 +455,9 @@
       const script = document.createElement('script');
       script.id = 'paypal-js-sdk-script';
       script.src = `https://www.paypal.com/sdk/js?${params.toString()}`;
+      if (state.userIdToken) {
+        script.setAttribute('data-user-id-token', state.userIdToken);
+      }
       script.async = true;
       script.onload = () => {
         state.sdkModeLoaded = mode;
@@ -489,7 +492,7 @@
     return data.id;
   }
 
-  async function captureOrderOnServer(orderID, donateEventId) {
+  async function captureOrderOnServer(orderID, donateEventId, donorInfo = {}) {
     const trackingPayload = window.Tracking
       ? window.Tracking.getFullTrackingPayload(donateEventId)
       : { eventId: donateEventId, sourceUrl: window.location.href };
@@ -504,7 +507,8 @@
           amount: getFinalAmountNumber(),
           baseAmount: state.amount,
           coverFees: state.coverFees,
-          donorName: 'Generous Supporter',
+          donorName: donorInfo.donorName || 'Generous Supporter',
+          donorEmail: donorInfo.donorEmail || null,
           tracking: trackingPayload,
         }),
       }
@@ -826,6 +830,7 @@
               apiVersionMinor: gpConfig.apiVersionMinor || 0,
               allowedPaymentMethods: gpConfig.allowedPaymentMethods,
               merchantInfo: gpConfig.merchantInfo,
+              emailRequired: true,
               transactionInfo: {
                 totalPriceStatus: 'FINAL',
                 totalPrice: finalAmt.toFixed(2),
@@ -848,12 +853,21 @@
               throw new Error('Google Pay authorization was not approved.');
             }
 
+            const gpName =
+              paymentData?.paymentMethodData?.info?.billingAddress?.name ||
+              null;
+            const gpEmail = paymentData?.email || null;
+            if (gpEmail && window.Tracking) {
+              await window.Tracking.setUserEmail(gpEmail);
+            }
+
             const donateEventId = window.Tracking
               ? window.Tracking.generateEventId('Donate')
               : `Donate_${Date.now()}`;
             const captureData = await captureOrderOnServer(
               orderId,
-              donateEventId
+              donateEventId,
+              { donorName: gpName, donorEmail: gpEmail }
             );
             if (window.Tracking) {
               window.Tracking.trackDonateBrowser(
@@ -952,18 +966,13 @@
         };
 
         const session = new window.ApplePaySession(4, paymentRequest);
-        let currentOrderId = null;
 
         session.onvalidatemerchant = async (event) => {
           try {
-            const [validationResult, orderId] = await Promise.all([
-              applepay.validateMerchant({
-                validationUrl: event.validationURL,
-                displayName: 'Help my baby',
-              }),
-              createOrderOnServer('apple_pay'),
-            ]);
-            currentOrderId = orderId;
+            const validationResult = await applepay.validateMerchant({
+              validationUrl: event.validationURL,
+              displayName: 'Help my baby',
+            });
             if (!validationResult?.merchantSession) {
               session.abort();
               return;
@@ -986,22 +995,36 @@
 
         session.onpaymentauthorized = async (event) => {
           try {
-            if (!currentOrderId) {
-              session.completePayment(window.ApplePaySession.STATUS_FAILURE);
-              return;
-            }
-            const confirmResult = await applepay.confirmOrder({
-              orderId: currentOrderId,
+            const orderId = await createOrderOnServer('apple_pay');
+            await applepay.confirmOrder({
+              orderId,
               token: event.payment.token,
               billingContact: event.payment.billingContact,
             });
+
+            const bc = event.payment?.billingContact || {};
+            const sc = event.payment?.shippingContact || {};
+            const apName = [
+              bc.givenName || sc.givenName || '',
+              bc.familyName || sc.familyName || '',
+            ]
+              .join(' ')
+              .trim();
+            const apEmail = sc.emailAddress || bc.emailAddress || null;
+            if (apEmail && window.Tracking) {
+              await window.Tracking.setUserEmail(apEmail);
+            }
 
             const donateEventId = window.Tracking
               ? window.Tracking.generateEventId('Donate')
               : `Donate_${Date.now()}`;
             const captureData = await captureOrderOnServer(
-              currentOrderId,
-              donateEventId
+              orderId,
+              donateEventId,
+              {
+                donorName: apName || 'Generous Supporter',
+                donorEmail: apEmail,
+              }
             );
             session.completePayment(window.ApplePaySession.STATUS_SUCCESS);
 
@@ -1016,7 +1039,7 @@
               window.CheckoutMonitor.stage('done');
             }
             showStatus(
-              formatSuccessMessage(captureData, currentOrderId),
+              formatSuccessMessage(captureData, orderId),
               'success'
             );
             if (captureData._recordedTransaction) {
@@ -1182,6 +1205,7 @@
       const res = await fetch('/api/config');
       const config = await res.json();
       state.clientId = config.clientId;
+      state.userIdToken = config.userIdToken || null;
       state.mode = config.mode || 'live';
       state.currency = config.currency || 'USD';
       state.feeRatePercent = config.feeRatePercent ?? 5.4;
