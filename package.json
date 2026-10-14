@@ -1,0 +1,15 @@
+{
+  "name": "paypal-donate-landing",
+  "version": "1.0.0",
+  "description": "Custom PayPal Donate landing page powered by PayPal JS SDK and Orders/Subscriptions REST API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "geoip-lite": "^1.4.10"
+  }
+}

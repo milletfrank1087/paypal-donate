@@ -1,0 +1,14 @@
+{
+  "title": "REPLACE: short, factual title",
+  "summary": "REPLACE: 1-3 sentences describing the real situation and the specific need.",
+  "useOfFunds": "REPLACE: exactly what the money pays for (who is paid, for what, with amounts if possible).",
+  "surplus": "REPLACE: what happens to any money raised beyond the goal.",
+  "organizer": "REPLACE: your real name or organization name",
+  "relationship": "REPLACE: your relationship to the person or cause being helped.",
+  "contact": "REPLACE: a real way for donors to reach you (email address or contact page).",
+  "updates": "REPLACE: how and when donors will get updates.",
+  "isRegisteredCharity": false,
+  "heroImage": "",
+  "heroImageAlt": "",
+  "presetAmounts": [10, 25, 50, 100]
+}

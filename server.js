@@ -1,0 +1,1057 @@
+require('dotenv').config();
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const cookieParser = require('cookie-parser');
+
+const {
+  trackEvent,
+  trackDonate,
+  trackSubscribe,
+  getTrackingConfig,
+  isTrackingEnabled,
+  getRecentCapiEvents,
+} = require('./lib/tracking');
+const { createJourneyLog } = require('./lib/logger');
+const {
+  visitors,
+  getOrCreateVisitor,
+  getClientInfo,
+} = require('./lib/visitors');
+const {
+  rememberAttempt,
+  attemptContext,
+  describeNetworkCode,
+  failureLine,
+  recordOutcome,
+  getAuthStats,
+} = require('./lib/payment-forensics');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const STORE_PATH = path.join(__dirname, 'transactions.json');
+
+const MARKET_CODE = process.env.MARKET_CODE || 'US';
+const ACTIVE_CAMPAIGN = process.env.ACTIVE_CAMPAIGN || 'help-my-baby';
+
+function fmtCurrency(amount) {
+  const num = Number(amount);
+  if (!Number.isFinite(num)) return `$${amount}`;
+  return num % 1 === 0 ? `$${num}` : `$${num.toFixed(2)}`;
+}
+
+const JourneyLog = createJourneyLog(fmtCurrency, { market: MARKET_CODE });
+
+function generateFBP() {
+  const timestamp = Date.now();
+  const high = Math.floor(Math.random() * 1e10);
+  const low = Math.floor(Math.random() * 1e9);
+  const random = `${high}${low.toString().padStart(9, '0')}`;
+  return `fb.1.${timestamp}.${random}`;
+}
+
+function buildPixelScripts() {
+  const trackingConfig = getTrackingConfig();
+  let pixelScripts = '';
+
+  if (trackingConfig.enabled) {
+    if (trackingConfig.fbPixelId) {
+      pixelScripts += `
+  <script>
+    !function(f,b,e,v,n,t,s)
+    {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+    if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+    n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];
+    s.parentNode.insertBefore(t,s)}(window, document,'script',
+    'https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', '${trackingConfig.fbPixelId}');
+  </script>
+  <noscript><img height="1" width="1" style="display:none"
+  src="https://www.facebook.com/tr?id=${trackingConfig.fbPixelId}&ev=PageView&noscript=1"/></noscript>`;
+    }
+
+    if (trackingConfig.tiktokPixelId) {
+      pixelScripts += `
+  <script>
+    !function (w, d, t) {
+      w.TiktokAnalyticsObject=t;var ttq=w[t]=w[t]||[];
+      ttq.methods=["page","track","identify","instances","debug","on","off","once","ready","alias","group","enableCookie","disableCookie"];
+      ttq.setAndDefer=function(t,e){t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}};
+      for(var i=0;i<ttq.methods.length;i++)ttq.setAndDefer(ttq,ttq.methods[i]);
+      ttq.instance=function(t){for(var e=ttq._i[t]||[],n=0;n<ttq.methods.length;n++)ttq.setAndDefer(e,ttq.methods[n]);return e};
+      ttq.load=function(e,n){var i="https://analytics.tiktok.com/i18n/pixel/events.js";
+      ttq._i=ttq._i||{},ttq._i[e]=[],ttq._i[e]._u=i,ttq._t=ttq._t||{},ttq._t[e]=+new Date,ttq._o=ttq._o||{},ttq._o[e]=n||{};
+      var o=document.createElement("script");o.type="text/javascript",o.async=!0,o.src=i+"?sdkid="+e+"&lib="+t;
+      var a=document.getElementsByTagName("script")[0];a.parentNode.insertBefore(o,a)};
+      ttq.load('${trackingConfig.tiktokPixelId}');
+    }(window, document, 'ttq');
+  </script>`;
+    }
+  }
+  return pixelScripts;
+}
+
+function loadStore() {
+  try {
+    if (fs.existsSync(STORE_PATH)) {
+      const parsed = JSON.parse(fs.readFileSync(STORE_PATH, 'utf8'));
+      return {
+        schedules: Array.isArray(parsed.schedules) ? parsed.schedules : [],
+        transactions: Array.isArray(parsed.transactions)
+          ? parsed.transactions
+          : [],
+      };
+    }
+  } catch (err) {
+    console.error('Failed to read transactions.json:', err.message);
+  }
+  return { schedules: [], transactions: [] };
+}
+
+function saveStore(store) {
+  try {
+    fs.writeFileSync(STORE_PATH, JSON.stringify(store, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to write transactions.json:', err.message);
+  }
+}
+
+const PAYPAL_MODE = (process.env.PAYPAL_MODE || 'sandbox').toLowerCase();
+const PAYPAL_CLIENT_ID = (process.env.PAYPAL_CLIENT_ID || '').trim();
+const PAYPAL_CLIENT_SECRET = (process.env.PAYPAL_CLIENT_SECRET || '').trim();
+const PAYPAL_API_BASE =
+  PAYPAL_MODE === 'live'
+    ? 'https://api-m.paypal.com'
+    : 'https://api-m.sandbox.paypal.com';
+
+app.use(express.json());
+app.use(cookieParser());
+
+// First-party _fbp cookie generation (ported from GFM New Cloaked campaign/server.js)
+app.use((req, res, next) => {
+  if (!req.cookies._fbp) {
+    const fbp = generateFBP();
+    const isProd = process.env.NODE_ENV === 'production';
+    res.cookie('_fbp', fbp, {
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      httpOnly: false,
+      secure: isProd,
+      sameSite: isProd ? 'None' : 'Lax',
+      path: '/',
+    });
+    req.cookies._fbp = fbp;
+  }
+  next();
+});
+
+// API failures, slow calls, and 404 scanner counter (ported from GFM New Cloaked)
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const status = res.statusCode;
+    const reqPath = req.originalUrl.split('?')[0];
+    if (status === 404 && !reqPath.startsWith('/api/')) {
+      JourneyLog.scannerHit();
+      return;
+    }
+    if (!reqPath.startsWith('/api/')) return;
+    const ms = Date.now() - start;
+    if (status >= 500 || (status >= 400 && status !== 404)) {
+      JourneyLog.system(
+        status >= 500 ? '💥' : '⚠️',
+        `HTTP ${status} ${req.method} ${reqPath} (${ms}ms)`
+      );
+    } else if (ms > 3000) {
+      JourneyLog.system('🐢', `slow ${req.method} ${reqPath} took ${ms}ms`);
+    }
+  });
+  next();
+});
+
+// Serve index.html dynamically with injected Meta & TikTok Pixel scripts
+app.get(['/', '/index.html'], (req, res) => {
+  const templatePath = path.join(__dirname, 'public', 'index.html');
+  let html = fs.readFileSync(templatePath, 'utf8');
+  html = html.replace('<!-- TRACKING_PIXELS_PLACEHOLDER -->', buildPixelScripts());
+  res.send(html);
+});
+
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
+
+// Cache OAuth token in memory until near expiry
+let cachedToken = null;
+let tokenExpiresAt = 0;
+
+async function getAccessToken() {
+  const now = Date.now();
+  if (cachedToken && now < tokenExpiresAt - 30_000) {
+    return cachedToken;
+  }
+
+  const credentials = Buffer.from(
+    `${PAYPAL_CLIENT_ID}:${PAYPAL_CLIENT_SECRET}`
+  ).toString('base64');
+
+  const response = await fetch(`${PAYPAL_API_BASE}/v1/oauth2/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${credentials}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: 'grant_type=client_credentials',
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`PayPal OAuth failed (${response.status}): ${errText}`);
+  }
+
+  const data = await response.json();
+  cachedToken = data.access_token;
+  tokenExpiresAt = now + (data.expires_in || 3200) * 1000;
+  return cachedToken;
+}
+
+/**
+ * Exact PayPal Donate gross-up fee formula:
+ * fee = amount > 0 ? (amount + flatFee) / (1 - feeRate / 100) - amount : 0
+ */
+const FLAT_FEE = 0.30;
+const FEE_RATE_PERCENT = 5.40;
+
+function computeFinalAmount(rawAmount, coverFees) {
+  const base = Number.parseFloat(rawAmount);
+  if (!Number.isFinite(base) || base < 1 || base > 100000) {
+    throw new Error('Please enter a valid donation amount of at least $1.00 USD.');
+  }
+  if (!coverFees) {
+    return base.toFixed(2);
+  }
+  const rate = FEE_RATE_PERCENT * 0.01;
+  const fee = Number(((base + FLAT_FEE) / (1 - rate) - base).toFixed(2));
+  return (base + fee).toFixed(2);
+}
+
+// Public config endpoint for the frontend SDK loader
+app.get('/api/config', (req, res) => {
+  const clientInfo = getClientInfo(req);
+  const { visitor } = getOrCreateVisitor(
+    clientInfo.ipAddress,
+    clientInfo.clientLocation,
+    clientInfo.userAgent
+  );
+  res.json({
+    clientId: PAYPAL_CLIENT_ID,
+    mode: PAYPAL_MODE,
+    currency: 'USD',
+    feeRatePercent: FEE_RATE_PERCENT,
+    flatFee: FLAT_FEE,
+    visitorId: visitor.id,
+    ipAddress: clientInfo.ipAddress,
+    device: clientInfo.device,
+    location: clientInfo.clientLocation,
+    tracking: getTrackingConfig(),
+    campaign: {
+      title: 'Help my baby',
+      description:
+        'My baby has cancer and am raising funds for the life saving surgery. Any donation counts',
+    },
+  });
+});
+
+// Tracking config endpoint (ported from GFM New Cloaked campaign/routes/public.js)
+app.get('/api/tracking/config', (req, res) => {
+  const config = getTrackingConfig();
+  const fbp = req.cookies._fbp || null;
+  const clientInfo = getClientInfo(req);
+  const { visitor } = getOrCreateVisitor(
+    clientInfo.ipAddress,
+    clientInfo.clientLocation,
+    clientInfo.userAgent
+  );
+  res.json({
+    ...config,
+    fbp,
+    visitorId: visitor.id,
+    ipAddress: clientInfo.ipAddress,
+    device: clientInfo.device,
+    location: clientInfo.clientLocation,
+  });
+});
+
+// Browser -> Server CAPI & Journey Log endpoint (ported from GFM New Cloaked campaign/routes/donation.js)
+app.post('/api/track', async (req, res) => {
+  const { event, eventId, sourceUrl, cookies, clientLocation, data } =
+    req.body || {};
+  const clientInfo = getClientInfo(req);
+  if (clientLocation?.countryCode) {
+    clientInfo.clientLocation = clientLocation;
+  }
+
+  const { visitor } = getOrCreateVisitor(
+    clientInfo.ipAddress,
+    clientInfo.clientLocation,
+    clientInfo.userAgent
+  );
+
+  const userData = {
+    email: data?.email || null,
+    emailHash: data?.emailHash || null,
+    fbp: cookies?.fbp || req.cookies._fbp || null,
+    fbc: cookies?.fbc || req.cookies._fbc || null,
+    ttp: cookies?.ttp || req.cookies._ttp || null,
+    ttclid: cookies?.ttclid || req.cookies._ttclid || null,
+    externalId: visitor.id,
+  };
+
+  const resolvedSourceUrl =
+    sourceUrl || `${req.protocol}://${req.get('host')}/`;
+
+  const eventData = {
+    eventId,
+    sourceUrl: resolvedSourceUrl,
+    value: data?.value,
+    currency: data?.currency || 'USD',
+    contentName: data?.contentName,
+    contentType: data?.contentType,
+  };
+
+  try {
+    let capiStatus = { meta: '-', tiktok: '-' };
+    if (isTrackingEnabled()) {
+      capiStatus = await trackEvent(event, eventData, userData, clientInfo);
+    }
+
+    if (event === 'PageView') {
+      return res.json({ success: true, visitorId: visitor.id, capiStatus });
+    }
+
+    if (event === 'ViewContent') {
+      JourneyLog.newVisitor(visitor, resolvedSourceUrl, capiStatus);
+    } else {
+      const eventMessages = {
+        Lead: 'Signed support message',
+        AddToCart: 'opened card donation drawer',
+        InitiateCheckout: `started checkout (${fmtCurrency(
+          data?.value || '?'
+        )})`,
+        AddPaymentInfo: 'typing card details in hosted fields',
+        Donate: 'completed donation',
+        Purchase: 'completed donation',
+      };
+      JourneyLog.event(
+        visitor,
+        event,
+        eventMessages[event] || event,
+        capiStatus
+      );
+    }
+
+    return res.json({ success: true, visitorId: visitor.id, capiStatus });
+  } catch (error) {
+    return res.json({ success: false, error: error.message });
+  }
+});
+
+// Payment interaction telemetry (cadence_selected, modal_close, checkout_abandon, card_error, etc.)
+app.post('/api/track/payment-event', (req, res) => {
+  const clientInfo = getClientInfo(req);
+  const { eventType, details, amount, paymentMethod, clientLocation } =
+    req.body || {};
+
+  const { visitor } = getOrCreateVisitor(
+    clientInfo.ipAddress,
+    clientLocation || clientInfo.clientLocation,
+    clientInfo.userAgent
+  );
+
+  let detailStr = details || '';
+  if (amount) {
+    detailStr = `${fmtCurrency(amount)}${
+      paymentMethod ? ` via ${paymentMethod}` : ''
+    }${details ? ` · ${details}` : ''}`;
+  }
+
+  JourneyLog.paymentEvent(visitor, eventType, detailStr);
+  res.json({ success: true });
+});
+
+// Client browser error monitor endpoint (ported from GFM New Cloaked campaign/routes/donation.js)
+app.post(
+  '/api/client/error',
+  express.text({ type: '*/*', limit: '4kb' }),
+  (req, res) => {
+    let body = req.body;
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch (_) {
+        body = {};
+      }
+    }
+    const kind = String(body?.kind || 'js')
+      .replace(/[^\w]/g, '')
+      .slice(0, 20);
+    const msg = String(body?.msg || '')
+      .replace(/\s+/g, ' ')
+      .slice(0, 200);
+    if (!msg) return res.status(204).end();
+    const clientInfo = getClientInfo(req);
+    const { visitor } = getOrCreateVisitor(
+      clientInfo.ipAddress,
+      clientInfo.clientLocation,
+      clientInfo.userAgent
+    );
+    const src = String(body.src || '')
+      .replace(/^https?:\/\/[^/]+/, '')
+      .replace(/\?.*$/, '')
+      .slice(0, 80);
+    const sig = `${kind}|${msg.replace(/\d+/g, '#')}|${src}`;
+    JourneyLog.clientError(
+      visitor.id,
+      sig,
+      `${kind}: ${msg}${
+        body.code ? ' [' + String(body.code).slice(0, 40) + ']' : ''
+      }${
+        src ? ' · ' + src + (body.line ? ':' + Number(body.line) : '') : ''
+      } · ${clientInfo.device}`
+    );
+    return res.status(204).end();
+  }
+);
+
+// Checkout funnel exit & attempt timing endpoint (ported from GFM New Cloaked store)
+app.post('/api/client/report', (req, res) => {
+  const body = req.body || {};
+  const clientInfo = getClientInfo(req);
+  if (body.t === 'exit' && body.stage) {
+    JourneyLog.checkoutExit(String(body.stage));
+  } else if (body.t === 'attempt') {
+    JourneyLog.attempt(
+      clientInfo.device,
+      String(body.result || 'error'),
+      Number(body.ms || 0)
+    );
+  }
+  res.status(204).end();
+});
+
+// Health / credential verification endpoint
+app.get('/api/health', async (_req, res) => {
+  try {
+    await getAccessToken();
+    res.json({ ok: true, mode: PAYPAL_MODE, paypalAuthenticated: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Create an Order (PayPal Orders v2) — supports One-Time + Weekly/Monthly Vaulting (store_in_vault: ON_SUCCESS)
+app.post('/api/orders', async (req, res) => {
+  const clientInfo = getClientInfo(req);
+  const { visitor } = getOrCreateVisitor(
+    clientInfo.ipAddress,
+    clientInfo.clientLocation,
+    clientInfo.userAgent
+  );
+
+  try {
+    const {
+      amount,
+      coverFees,
+      frequency = 'ONE_TIME',
+      fundingSource = 'card',
+    } = req.body || {};
+    const finalValue = computeFinalAmount(amount, Boolean(coverFees));
+    const accessToken = await getAccessToken();
+
+    const isRecurring = frequency === 'WEEK' || frequency === 'MONTH';
+    const freqLabel =
+      frequency === 'WEEK'
+        ? 'Weekly'
+        : frequency === 'MONTH'
+        ? 'Monthly'
+        : 'One-Time';
+    const itemDescription = isRecurring
+      ? `${freqLabel} Recurring Donation to Help my baby`
+      : 'Donation to Help my baby';
+
+    const orderPayload = {
+      intent: 'CAPTURE',
+      purchase_units: [
+        {
+          description: itemDescription,
+          custom_id: `DONATION_HELP_MY_BABY_${frequency}`,
+          amount: {
+            currency_code: 'USD',
+            value: finalValue,
+          },
+        },
+      ],
+      application_context: {
+        brand_name: 'Help my baby',
+        shipping_preference: 'NO_SHIPPING',
+        user_action: 'PAY_NOW',
+      },
+    };
+
+    // For Weekly/Monthly card donations, instruct PayPal Vault v3 to vault the card on successful capture
+    if (isRecurring && fundingSource === 'card') {
+      orderPayload.payment_source = {
+        card: {
+          attributes: {
+            vault: {
+              store_in_vault: 'ON_SUCCESS',
+            },
+          },
+        },
+      };
+    }
+
+    const response = await fetch(`${PAYPAL_API_BASE}/v2/checkout/orders`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(orderPayload),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      const errMsg =
+        data?.details?.[0]?.description ||
+        data?.message ||
+        'Failed to create PayPal order.';
+      JourneyLog.decline(
+        visitor,
+        `order creation failed: ${errMsg}`,
+        `${visitor.country}:ORDER_FAIL`
+      );
+      return res.status(response.status).json({
+        error: errMsg,
+        details: data,
+      });
+    }
+
+    rememberAttempt(data.id, {
+      vid: visitor.id,
+      mkt: MARKET_CODE,
+      ua: clientInfo.userAgent,
+      ip: clientInfo.ipAddress,
+      geo: visitor.country,
+      currency: 'USD',
+      amount: finalValue,
+      frequency,
+    });
+
+    const baseNum = Number.parseFloat(amount) || Number.parseFloat(finalValue);
+    const feeNum = Math.max(
+      0,
+      Number((Number.parseFloat(finalValue) - baseNum).toFixed(2))
+    );
+    JourneyLog.paymentEvent(
+      visitor,
+      'redirect_initiated',
+      `${fmtCurrency(baseNum)}${
+        feeNum > 0 ? ' + ' + fmtCurrency(feeNum) + ' fee' : ''
+      } (${freqLabel}) → PayPal Order ${data.id}`
+    );
+
+    return res.json({
+      id: data.id,
+      amount: finalValue,
+      frequency,
+      visitorId: visitor.id,
+    });
+  } catch (err) {
+    JourneyLog.paymentEvent(visitor, 'card_error', err.message);
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// Capture an approved Order, fire Meta CAPI Purchase/Subscribe, and persist in transactions.json
+app.post('/api/orders/:orderID/capture', async (req, res) => {
+  const clientInfo = getClientInfo(req);
+  const { visitor } = getOrCreateVisitor(
+    clientInfo.ipAddress,
+    clientInfo.clientLocation,
+    clientInfo.userAgent
+  );
+
+  try {
+    const { orderID } = req.params;
+    const {
+      frequency = 'ONE_TIME',
+      amount,
+      baseAmount,
+      coverFees = false,
+      donorName,
+      donorEmail,
+      tracking = {},
+    } = req.body || {};
+    const accessToken = await getAccessToken();
+
+    const response = await fetch(
+      `${PAYPAL_API_BASE}/v2/checkout/orders/${encodeURIComponent(
+        orderID
+      )}/capture`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    const data = await response.json();
+    const captureObj = data?.purchase_units?.[0]?.payments?.captures?.[0] || {};
+    const cardObj = data?.payment_source?.card || {};
+    const procCode = captureObj?.processor_response?.response_code || null;
+
+    if (!response.ok || captureObj?.status === 'DECLINED') {
+      const issue =
+        data?.details?.[0]?.issue ||
+        (captureObj?.status === 'DECLINED' ? 'CAPTURE_DECLINED' : 'CAPTURE_ERR');
+      const errDesc =
+        data?.details?.[0]?.description ||
+        data?.message ||
+        describeNetworkCode(cardObj.brand, procCode) ||
+        'Card declined by issuer.';
+      const fLine = failureLine(
+        orderID,
+        {
+          brand: cardObj.brand || 'CARD',
+          cardType: cardObj.type || '',
+          last4: cardObj.last_digits || '',
+          code: procCode || issue,
+          issue: errDesc,
+        },
+        attemptContext(orderID)
+      );
+      JourneyLog.decline(
+        visitor,
+        `${fLine} [${orderID}]`,
+        `${visitor.country}:${procCode || issue}`
+      );
+      recordOutcome(false, {
+        country: visitor.country,
+        code: procCode || issue,
+      });
+      return res.status(response.status >= 400 ? response.status : 422).json({
+        error: errDesc,
+        processorResponseCode: procCode,
+        details: data,
+      });
+    }
+
+    recordOutcome(true, { country: visitor.country, code: procCode || '0000' });
+
+    const vaultInfo = cardObj?.attributes?.vault || null;
+    const netRef = captureObj?.network_transaction_reference || {};
+    const nowIso = new Date().toISOString();
+    const capturedAmount =
+      captureObj?.amount?.value ||
+      (amount ? Number(amount).toFixed(2) : '0.00');
+    const totalNum = Number.parseFloat(capturedAmount) || 0;
+    const baseNum = Number.parseFloat(baseAmount || amount) || totalNum;
+    const tipNum = Math.max(0, Number((totalNum - baseNum).toFixed(2)));
+
+    // Resolve clean donor / cardholder name (never '=' or blank)
+    const payerName = data?.payer?.name?.given_name
+      ? `${data.payer.name.given_name} ${data.payer.name.surname || ''}`.trim()
+      : '';
+    const resolvedDonorName =
+      [cardObj.name, donorName, payerName]
+        .map((n) => String(n || '').trim())
+        .find((n) => n && !/^(=|-|—|unknown|null|undefined)$/i.test(n)) ||
+      'Generous Supporter';
+    const resolvedEmail =
+      donorEmail || data?.payer?.email_address || null;
+
+    const store = loadStore();
+    let scheduleId = null;
+
+    if ((frequency === 'WEEK' || frequency === 'MONTH') && vaultInfo?.id) {
+      scheduleId = `SCHED-${Date.now()}`;
+      const newSchedule = {
+        scheduleId,
+        vaultId: vaultInfo.id,
+        vaultStatus: vaultInfo.status || 'VAULTED',
+        customerId: vaultInfo?.customer?.id || visitor.id,
+        donorName: resolvedDonorName,
+        visitorId: visitor.id,
+        ipAddress: clientInfo.ipAddress,
+        location: JourneyLog.formatLocation(visitor) || 'Local (DEV)',
+        device: clientInfo.device,
+        frequency,
+        amount: capturedAmount,
+        currency: 'USD',
+        cardBrand: cardObj.brand || 'VISA',
+        cardLast4: cardObj.last_digits || '1111',
+        cardExpiry: cardObj.expiry || '',
+        initialOrderId: data.id,
+        initialCaptureId: captureObj.id || null,
+        lastNetworkReferenceId: netRef.id || null,
+        networkName: netRef.network || cardObj.brand || 'VISA',
+        createdAt: nowIso,
+        lastBilledAt: nowIso,
+        rebillCount: 0,
+      };
+      store.schedules.unshift(newSchedule);
+    }
+
+    // Fire server-side Meta Conversions API Donate (+ Subscribe for recurring) with shared eventId
+    const donateEventId =
+      tracking.eventId || `Donate_${captureObj.id || data.id}`;
+    const sourceUrl =
+      tracking.sourceUrl || `${req.protocol}://${req.get('host')}/`;
+    const trackingPayload = {
+      eventId: donateEventId,
+      sourceUrl,
+      fbp: tracking.fbp || req.cookies._fbp || null,
+      fbc: tracking.fbc || req.cookies._fbc || null,
+      ttp: tracking.ttp || req.cookies._ttp || null,
+      ttclid: tracking.ttclid || req.cookies._ttclid || null,
+    };
+
+    let capiResult = { meta: '-', tiktok: '-' };
+    if (isTrackingEnabled()) {
+      try {
+        capiResult = await trackDonate(
+          {
+            amount: totalNum,
+            currency: 'USD',
+            donationType:
+              frequency === 'MONTH'
+                ? 'monthly'
+                : frequency === 'WEEK'
+                ? 'weekly'
+                : 'one-time',
+            captureId: captureObj.id || data.id,
+            cardHolderName: resolvedDonorName,
+            donorNameReal: resolvedDonorName,
+            donorEmail: resolvedEmail,
+            customerId: vaultInfo?.customer?.id || visitor.id,
+          },
+          trackingPayload,
+          clientInfo
+        );
+
+        if (frequency === 'WEEK' || frequency === 'MONTH') {
+          await trackSubscribe(
+            {
+              id: scheduleId || vaultInfo?.id || data.id,
+              monthly: totalNum,
+              amount: totalNum,
+              currency: 'USD',
+              frequency,
+            },
+            { name: resolvedDonorName, email: resolvedEmail },
+            trackingPayload,
+            clientInfo
+          );
+        }
+      } catch (capiErr) {
+        console.error('CAPI tracking error (non-critical):', capiErr.message);
+      }
+    }
+
+    JourneyLog.purchase(
+      visitor,
+      {
+        amount: baseNum,
+        tip: tipNum,
+        total: totalNum,
+        brand:
+          cardObj.brand || (data?.payment_source?.paypal ? 'PayPal' : 'Card'),
+        last4: cardObj.last_digits || null,
+        name: resolvedDonorName,
+        frequency,
+        vaultId: vaultInfo?.id || null,
+      },
+      capiResult
+    );
+
+    const txRecord = {
+      txId: `TX-${Date.now()}`,
+      type: 'INITIAL',
+      scheduleId,
+      orderId: data.id,
+      captureId: captureObj.id || data.id,
+      status: captureObj.status || data.status || 'COMPLETED',
+      frequency,
+      amount: capturedAmount,
+      baseAmount: baseNum.toFixed(2),
+      feeCovered: coverFees ? tipNum.toFixed(2) : '0.00',
+      paypalFee:
+        captureObj?.seller_receivable_breakdown?.paypal_fee?.value || null,
+      netAmount:
+        captureObj?.seller_receivable_breakdown?.net_amount?.value || null,
+      currency: 'USD',
+      donorName: resolvedDonorName,
+      cardBrand:
+        cardObj.brand || (data?.payment_source?.paypal ? 'PAYPAL' : 'VISA'),
+      cardLast4: cardObj.last_digits || null,
+      cardExpiry: cardObj.expiry || null,
+      vaultId: vaultInfo?.id || null,
+      vaultStatus:
+        vaultInfo?.status || (frequency === 'ONE_TIME' ? 'ONE_TIME' : null),
+      customerId: vaultInfo?.customer?.id || visitor.id,
+      networkReferenceId: netRef.id || null,
+      networkName: netRef.network || cardObj.brand || null,
+      processorResponseCode: procCode || '0000',
+      visitorId: visitor.id,
+      ipAddress: clientInfo.ipAddress,
+      location: JourneyLog.formatLocation(visitor) || 'Local (DEV)',
+      device: clientInfo.device,
+      donateEventId,
+      capiMeta: capiResult.meta,
+      capiTiktok: capiResult.tiktok,
+      createdAt: captureObj.create_time || nowIso,
+    };
+
+    store.transactions.unshift(txRecord);
+    saveStore(store);
+
+    return res.json({
+      ...data,
+      _recordedTransaction: txRecord,
+      _tracking: {
+        donateEventId,
+        capiStatus: capiResult,
+        visitorId: visitor.id,
+      },
+    });
+  } catch (err) {
+    JourneyLog.paymentEvent(visitor, 'card_error', err.message);
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// Debug endpoint: list persisted Vault schedules, transactions, live server logs, CAPI events, and visitor geo sessions
+app.get('/api/debug/transactions', (_req, res) => {
+  const store = loadStore();
+  res.json({
+    ...store,
+    serverLogs: JourneyLog.getRecentLogs(),
+    capiEvents: getRecentCapiEvents(),
+    counters: JourneyLog.getCounters(),
+    authStats: getAuthStats(),
+    visitors: Array.from(visitors.values()),
+    trackingConfig: getTrackingConfig(),
+  });
+});
+
+// Charge a previously vaulted card token for subsequent Weekly/Monthly cycles (MIT / Reference Transaction)
+app.post('/api/vault/charge', async (req, res) => {
+  const clientInfo = getClientInfo(req);
+  const { visitor } = getOrCreateVisitor(
+    clientInfo.ipAddress,
+    clientInfo.clientLocation,
+    clientInfo.userAgent
+  );
+
+  try {
+    const {
+      scheduleId,
+      vaultId,
+      amount,
+      frequency = 'WEEK',
+      previousNetworkReferenceId,
+      networkName,
+    } = req.body || {};
+
+    const store = loadStore();
+    const matchedSchedule = store.schedules.find(
+      (s) =>
+        (scheduleId && s.scheduleId === scheduleId) ||
+        (vaultId && s.vaultId === vaultId)
+    );
+
+    const targetVaultId = vaultId || matchedSchedule?.vaultId;
+    if (!targetVaultId) {
+      return res.status(400).json({ error: 'vaultId is required.' });
+    }
+
+    const rawAmt = amount || matchedSchedule?.amount || '1.00';
+    const finalValue = computeFinalAmount(rawAmt, false);
+    const targetFreq = matchedSchedule?.frequency || frequency;
+    const prevNetId =
+      previousNetworkReferenceId ||
+      matchedSchedule?.lastNetworkReferenceId ||
+      null;
+    const prevNetBrand =
+      networkName ||
+      matchedSchedule?.networkName ||
+      matchedSchedule?.cardBrand ||
+      'VISA';
+
+    const accessToken = await getAccessToken();
+
+    const storedCredential = {
+      payment_initiator: 'MERCHANT',
+      payment_type: 'RECURRING',
+      usage: 'SUBSEQUENT',
+    };
+    if (prevNetId) {
+      storedCredential.previous_network_transaction_reference = {
+        id: prevNetId,
+        network: prevNetBrand,
+      };
+    }
+
+    const response = await fetch(`${PAYPAL_API_BASE}/v2/checkout/orders`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'PayPal-Request-Id': `mit-${targetVaultId}-${Date.now()}`,
+      },
+      body: JSON.stringify({
+        intent: 'CAPTURE',
+        purchase_units: [
+          {
+            description: `${
+              targetFreq === 'WEEK' ? 'Weekly' : 'Monthly'
+            } Recurring Donation Renewal - Help my baby`,
+            custom_id: `REBILL_HELP_MY_BABY_${targetFreq}`,
+            amount: {
+              currency_code: 'USD',
+              value: finalValue,
+            },
+          },
+        ],
+        payment_source: {
+          card: {
+            vault_id: targetVaultId,
+            stored_credential: storedCredential,
+          },
+        },
+      }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      const errMsg =
+        data?.details?.[0]?.description ||
+        data?.message ||
+        'Failed to charge vaulted card.';
+      JourneyLog.decline(
+        visitor,
+        `MIT rebill failed (${targetVaultId}): ${errMsg}`,
+        `${visitor.country}:REBILL_FAIL`
+      );
+      return res.status(response.status).json({
+        error: errMsg,
+        details: data,
+      });
+    }
+
+    const captureObj = data?.purchase_units?.[0]?.payments?.captures?.[0] || {};
+    const cardObj = data?.payment_source?.card || {};
+    const netRef = captureObj?.network_transaction_reference || {};
+    const nowIso = new Date().toISOString();
+
+    if (matchedSchedule) {
+      matchedSchedule.lastBilledAt = captureObj.create_time || nowIso;
+      matchedSchedule.rebillCount = (matchedSchedule.rebillCount || 0) + 1;
+      if (netRef.id) {
+        matchedSchedule.lastNetworkReferenceId = netRef.id;
+      }
+    }
+
+    const resolvedDonorName =
+      matchedSchedule?.donorName || 'Generous Supporter';
+
+    const rebillTx = {
+      txId: `TX-${Date.now()}`,
+      type: 'REBILL',
+      scheduleId: matchedSchedule?.scheduleId || scheduleId || null,
+      orderId: data.id,
+      captureId: captureObj.id || data.id,
+      status: captureObj.status || data.status || 'COMPLETED',
+      frequency: targetFreq,
+      amount: captureObj?.amount?.value || finalValue,
+      paypalFee:
+        captureObj?.seller_receivable_breakdown?.paypal_fee?.value || null,
+      netAmount:
+        captureObj?.seller_receivable_breakdown?.net_amount?.value || null,
+      currency: 'USD',
+      donorName: resolvedDonorName,
+      cardBrand: cardObj.brand || matchedSchedule?.cardBrand || 'VISA',
+      cardLast4: cardObj.last_digits || matchedSchedule?.cardLast4 || '1111',
+      cardExpiry: cardObj.expiry || matchedSchedule?.cardExpiry || '',
+      vaultId: targetVaultId,
+      vaultStatus: 'VAULTED',
+      customerId: matchedSchedule?.customerId || visitor.id,
+      networkReferenceId: netRef.id || null,
+      networkName: netRef.network || prevNetBrand,
+      processorResponseCode:
+        captureObj?.processor_response?.response_code || '0000',
+      visitorId: matchedSchedule?.visitorId || visitor.id,
+      ipAddress: clientInfo.ipAddress,
+      location:
+        matchedSchedule?.location ||
+        JourneyLog.formatLocation(visitor) ||
+        'Local (DEV)',
+      device: clientInfo.device,
+      capiMeta: 'SKIP(renewal)',
+      capiTiktok: 'SKIP(renewal)',
+      createdAt: captureObj.create_time || nowIso,
+    };
+
+    store.transactions.unshift(rebillTx);
+    saveStore(store);
+
+    JourneyLog.paymentEvent(
+      visitor,
+      'rebill_charged',
+      `${fmtCurrency(rebillTx.amount)} (${
+        targetFreq === 'WEEK' ? 'Weekly' : 'Monthly'
+      }) · ${rebillTx.cardBrand} ••${rebillTx.cardLast4} · vault:${targetVaultId} → Capture ${
+        rebillTx.captureId
+      }`
+    );
+
+    return res.json({
+      ok: true,
+      transaction: rebillTx,
+      schedule: matchedSchedule || null,
+      rawPayPalOrder: data,
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+app.listen(PORT, async () => {
+  const trackingConfig = getTrackingConfig();
+  let trackingStatus = 'DISABLED';
+  if (trackingConfig.enabled) {
+    const platforms = [];
+    if (trackingConfig.fbPixelId)
+      platforms.push(`Meta (${trackingConfig.fbPixelId})`);
+    if (trackingConfig.tiktokPixelId) platforms.push('TikTok');
+    trackingStatus = platforms.join(' + ') + ' [ENABLED]';
+  }
+  JourneyLog.startup(
+    PORT,
+    ACTIVE_CAMPAIGN,
+    'USD ($)',
+    'English (en)',
+    trackingStatus
+  );
+  try {
+    await getAccessToken();
+    JourneyLog.system(
+      '✅',
+      `PayPal credentials verified at boot (${PAYPAL_MODE} mode)`
+    );
+  } catch (err) {
+    JourneyLog.system('💥', `PayPal boot health check FAILED: ${err.message}`);
+  }
+});

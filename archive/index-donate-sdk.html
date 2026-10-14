@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Donate</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --card: #ffffff;
+      --text: #1b1f24;
+      --muted: #5b6570;
+      --accent: #0b5fff;
+      --border: #e1e5ea;
+      --warn-bg: #fff6e0;
+      --warn-border: #f0c36d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    main {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 24px 16px 64px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 16px;
+    }
+    h1 { font-size: 1.6rem; margin: 0 0 8px; }
+    h2 { font-size: 1.1rem; margin: 0 0 8px; }
+    p { margin: 0 0 12px; }
+    p:last-child { margin-bottom: 0; }
+    .muted { color: var(--muted); font-size: 0.92rem; }
+    .row { display: grid; grid-template-columns: 130px 1fr; gap: 8px; margin-bottom: 8px; }
+    .row dt { font-weight: 600; }
+    dl { margin: 0; }
+    dd { margin: 0; }
+    @media (max-width: 480px) {
+      .row { grid-template-columns: 1fr; gap: 0; }
+    }
+    #paypal-donate-button-container { margin-top: 12px; }
+    .notice {
+      background: var(--warn-bg);
+      border: 1px solid var(--warn-border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 0.92rem;
+    }
+    #thanks {
+      display: none;
+      border-color: #9bd3a8;
+      background: #eefaf0;
+    }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card">
+      <h1 id="title"></h1>
+      <p id="summary"></p>
+      <div id="setup-warning" class="notice" hidden></div>
+      <div id="paypal-donate-button-container"></div>
+      <p id="mode-note" class="muted"></p>
+    </section>
+
+    <section id="thanks" class="card" aria-live="polite">
+      <h2>Thank you</h2>
+      <p id="thanks-text"></p>
+    </section>
+
+    <section class="card">
+      <h2>Where your donation goes</h2>
+      <p id="use-of-funds"></p>
+      <p id="surplus"></p>
+    </section>
+
+    <section class="card">
+      <h2>Who is behind this</h2>
+      <dl>
+        <div class="row"><dt>Organizer</dt><dd id="organizer"></dd></div>
+        <div class="row"><dt>Relationship</dt><dd id="relationship"></dd></div>
+        <div class="row"><dt>Contact</dt><dd id="contact"></dd></div>
+        <div class="row"><dt>Updates</dt><dd id="updates"></dd></div>
+      </dl>
+    </section>
+
+    <p id="tax-note" class="muted"></p>
+  </main>
+
+  <script src="https://www.paypalobjects.com/donate/sdk/donate-sdk.js" charset="UTF-8"></script>
+  <script>
+    // ------------------------------------------------------------------
+    // EDIT THIS BLOCK. Everything shown on the page comes from here.
+    // Only write things that are true and that you can back up.
+    // ------------------------------------------------------------------
+    const CONFIG = {
+      // 'sandbox' = fake money for testing. Change to 'production' to go live.
+      // Sandbox and live buttons have DIFFERENT IDs; create a new button for live.
+      env: 'sandbox',
+
+      // From paypal.com/donate/buttons (or sandbox.paypal.com/donate/buttons).
+      // Business account -> use hostedButtonId. Personal account -> use business
+      // (your PayPal email or Payer ID) and leave hostedButtonId empty.
+      hostedButtonId: 'REPLACE_WITH_HOSTED_BUTTON_ID',
+      business: '',
+
+      title: 'REPLACE: short, factual title',
+      summary: 'REPLACE: 1-3 sentences describing the real situation and need.',
+
+      useOfFunds: 'REPLACE: exactly what the money will be spent on (e.g. specific bills, amounts, who receives it).',
+      surplus: 'REPLACE: what happens if more than needed is raised (e.g. donated to X / returned / used for Y).',
+
+      organizer: 'REPLACE: your real name or organization name',
+      relationship: 'REPLACE: your relationship to the person or cause being helped',
+      contact: 'REPLACE: an email or page where donors can reach you',
+      updates: 'REPLACE: where you will post progress updates (and how often)',
+
+      // Set true ONLY if you are a registered charity with documented status.
+      isRegisteredCharity: false
+    };
+    // ------------------------------------------------------------------
+
+    const $ = (id) => document.getElementById(id);
+    // textContent (not innerHTML) so config text can never inject markup.
+    const setText = (id, value) => { $(id).textContent = value; };
+
+    document.title = CONFIG.title;
+    setText('title', CONFIG.title);
+    setText('summary', CONFIG.summary);
+    setText('use-of-funds', CONFIG.useOfFunds);
+    setText('surplus', CONFIG.surplus);
+    setText('organizer', CONFIG.organizer);
+    setText('relationship', CONFIG.relationship);
+    setText('contact', CONFIG.contact);
+    setText('updates', CONFIG.updates);
+    setText(
+      'tax-note',
+      CONFIG.isRegisteredCharity
+        ? 'Donations may be tax-deductible where the law allows. Keep your PayPal receipt.'
+        : 'This is not a registered charity. Donations are personal gifts and are not tax-deductible.'
+    );
+    setText(
+      'mode-note',
+      CONFIG.env === 'production'
+        ? ''
+        : 'TEST MODE (sandbox): no real money moves. Use a PayPal sandbox account to test.'
+    );
+
+    const hasId = CONFIG.hostedButtonId && !CONFIG.hostedButtonId.startsWith('REPLACE');
+    const hasBusiness = CONFIG.business && !CONFIG.business.startsWith('REPLACE');
+    const placeholdersLeft = Object.values(CONFIG).some(
+      (v) => typeof v === 'string' && v.startsWith('REPLACE')
+    );
+
+    function showWarning(message) {
+      const box = $('setup-warning');
+      box.textContent = message;
+      box.hidden = false;
+    }
+
+    if (!hasId && !hasBusiness) {
+      showWarning('Setup needed: add your hosted button ID (or business email) in CONFIG in index.html.');
+    } else {
+      if (placeholdersLeft && CONFIG.env === 'production') {
+        showWarning('Some CONFIG text still says REPLACE. Fill it in before sharing this page.');
+      }
+
+      const options = {
+        image: {
+          src: 'https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif',
+          title: 'PayPal - The safer, easier way to pay online!',
+          alt: 'Donate with PayPal button'
+        },
+        // IMPORTANT: this callback runs in the donor's browser, so it can be faked.
+        // Use it only for a thank-you message. Check real payments in your PayPal account.
+        onComplete: function (params) {
+          $('thanks').style.display = 'block';
+          setText(
+            'thanks-text',
+            'Your donation was submitted' + (params && params.tx ? ' (ref: ' + params.tx + ')' : '') +
+            '. A receipt will be emailed to you by PayPal.'
+          );
+        }
+      };
+
+      if (CONFIG.env !== 'production') options.env = 'sandbox';
+      if (hasId) options.hosted_button_id = CONFIG.hostedButtonId;
+      else options.business = CONFIG.business;
+
+      PayPal.Donation.Button(options).render('#paypal-donate-button-container');
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{"at":"2026-10-14T08:18:01.464Z","type":"order_created","orderId":"47L45976RF7642901","sid":"smoke-test-sid-paypal","amount":"25.00","currency":"USD","method":"paypal"}
+{"at":"2026-10-14T08:18:02.255Z","type":"order_created","orderId":"335152123G131884E","sid":"smoke-test-sid-card","amount":"25.00","currency":"USD","method":"card"}
+{"at":"2026-10-14T08:19:51.134Z","type":"order_created","orderId":"8E953720156456848","sid":"smoke-test-sid-paypal","amount":"25.00","currency":"USD","method":"paypal"}
+{"at":"2026-10-14T08:19:52.451Z","type":"order_created","orderId":"28F17843KM5906451","sid":"smoke-test-sid-card","amount":"25.00","currency":"USD","method":"card"}
+{"at":"2026-10-14T08:19:53.811Z","type":"order_created","orderId":"22T078253H769364F","sid":"f28811e0-8372-4273-b80b-1cd772f8bd93","amount":"1.00","currency":"USD","method":"paypal"}
+{"at":"2026-10-14T08:19:55.114Z","type":"order_created","orderId":"57H08702HF803943J","sid":"569f44bb-505d-4e8f-ab21-008b7265dc81","amount":"12.50","currency":"USD","method":"paypal"}
+{"at":"2026-10-14T08:19:56.653Z","type":"return_not_approved","orderId":"8E953720156456848","status":"PAYER_ACTION_REQUIRED"}
+{"at":"2026-10-14T08:20:05.732Z","type":"order_created","orderId":"217097356W432463K","sid":"d064b524-5755-42ec-b08c-464662f52f00","amount":"10.00","currency":"USD","method":"paypal"}
+{"at":"2026-10-14T08:20:12.996Z","type":"order_created","orderId":"5AM138662P026805Y","sid":"d064b524-5755-42ec-b08c-464662f52f00","amount":"10.00","currency":"USD","method":"card"}
