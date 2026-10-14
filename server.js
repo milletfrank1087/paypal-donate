@@ -502,7 +502,7 @@ app.post('/api/orders', async (req, res) => {
       },
     };
 
-    if (isRecurring && fundingSource === 'card') {
+    if (fundingSource === 'card') {
       orderPayload.payment_source = {
         card: {
           attributes: {
@@ -645,6 +645,36 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
         country: visitor.country,
         code: procCode || issue,
       });
+
+      const failStore = loadStore();
+      failStore.transactions.unshift({
+        txId: `FAIL-${Date.now()}`,
+        type: 'FAILED',
+        status: 'FAILED',
+        orderId,
+        frequency,
+        amount: amount ? Number(amount).toFixed(2) : '0.00',
+        baseAmount: baseAmount ? Number(baseAmount).toFixed(2) : '0.00',
+        feeCovered: '0.00',
+        paypalFee: '0.00',
+        netAmount: '0.00',
+        currency: 'USD',
+        donorName: cardObj.name || donorName || 'Declined Attempt',
+        cardBrand: cardObj.brand || 'CARD',
+        cardLast4: cardObj.last_digits || null,
+        processorResponseCode: procCode || issue,
+        failureReason: errDesc,
+        utmCampaign: tracking.utm_campaign || 'direct',
+        utmSource: tracking.utm_source || null,
+        fbclid: tracking.fbclid || req.cookies._fbclid || null,
+        visitorId: visitor.id,
+        ipAddress: clientInfo.ipAddress,
+        location: JourneyLog.formatLocation(visitor) || 'Local (DEV)',
+        device: clientInfo.device,
+        createdAt: new Date().toISOString(),
+      });
+      saveStore(failStore);
+
       return res.status(response.status >= 400 ? response.status : 422).json({
         error: errDesc,
         processorResponseCode: procCode,
@@ -674,11 +704,16 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
       'Generous Supporter';
     const resolvedEmail =
       donorEmail || data?.payer?.email_address || null;
+    const fbclid = tracking.fbclid || req.cookies._fbclid || null;
+    const utmCampaign = tracking.utm_campaign || 'direct';
+    const utmSource = tracking.utm_source || null;
+    const utmMedium = tracking.utm_medium || null;
+    const utmContent = tracking.utm_content || null;
 
     const store = loadStore();
     let scheduleId = null;
 
-    if ((frequency === 'WEEK' || frequency === 'MONTH') && vaultInfo?.id) {
+    if (vaultInfo?.id) {
       scheduleId = `SCHED-${Date.now()}`;
       const newSchedule = {
         scheduleId,
@@ -702,6 +737,11 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
         initialCaptureId: captureObj.id || null,
         lastNetworkReferenceId: netRef.id || null,
         networkName: netRef.network || cardObj.brand || 'VISA',
+        utmCampaign,
+        utmSource,
+        utmMedium,
+        utmContent,
+        fbclid,
         createdAt: nowIso,
         lastBilledAt: nowIso,
         rebillCount: 0,
@@ -714,11 +754,16 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
       tracking.eventId || `Donate_${captureObj.id || data.id}`;
     const sourceUrl =
       tracking.sourceUrl || `${req.protocol}://${req.get('host')}/`;
+    const resolvedFbc =
+      tracking.fbc ||
+      req.cookies._fbc ||
+      (fbclid ? `fb.1.${Date.now()}.${fbclid}` : null);
     const trackingPayload = {
       eventId: donateEventId,
       sourceUrl,
       fbp: tracking.fbp || req.cookies._fbp || null,
-      fbc: tracking.fbc || req.cookies._fbc || null,
+      fbc: resolvedFbc,
+      fbclid,
       ttp: tracking.ttp || req.cookies._ttp || null,
       ttclid: tracking.ttclid || req.cookies._ttclid || null,
     };
@@ -813,6 +858,11 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
       ipAddress: clientInfo.ipAddress,
       location: JourneyLog.formatLocation(visitor) || 'Local (DEV)',
       device: clientInfo.device,
+      utmCampaign,
+      utmSource,
+      utmMedium,
+      utmContent,
+      fbclid,
       donateEventId,
       capiMeta: capiResult.meta,
       capiTiktok: capiResult.tiktok,
@@ -839,23 +889,35 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
 
 function buildDashboardData() {
   const store = loadStore();
-  const schedules = store.schedules.map((s) => ({
-    status: s.status || 'ACTIVE',
-    ...s,
-  }));
   const transactions = store.transactions || [];
 
   let totalDonated = 0;
   let initialDonationsTotal = 0;
   let rebillsTotal = 0;
   let totalRebills = 0;
+  let paypalFeesTotal = 0;
+  let feesCoveredTotal = 0;
   let netTotal = 0;
+  let completedCount = 0;
+  let failedCount = 0;
 
   transactions.forEach((t) => {
+    if (t.status === 'FAILED' || t.type === 'FAILED') {
+      failedCount += 1;
+      return;
+    }
     if (t.status === 'COMPLETED' || !t.status) {
+      completedCount += 1;
       const amt = Number.parseFloat(t.amount) || 0;
-      const net = Number.parseFloat(t.netAmount) || amt;
+      const fee = Number.parseFloat(t.paypalFee) || 0;
+      const tip = Number.parseFloat(t.feeCovered) || 0;
+      const net =
+        t.netAmount !== null && t.netAmount !== undefined
+          ? Number.parseFloat(t.netAmount)
+          : Math.max(0, amt - fee);
       totalDonated += amt;
+      paypalFeesTotal += fee;
+      feesCoveredTotal += tip;
       netTotal += net;
       if (t.type === 'REBILL') {
         rebillsTotal += amt;
@@ -864,6 +926,44 @@ function buildDashboardData() {
         initialDonationsTotal += amt;
       }
     }
+  });
+
+  const schedules = store.schedules.map((s) => {
+    const payments = transactions.filter(
+      (t) =>
+        t.status !== 'FAILED' &&
+        t.type !== 'FAILED' &&
+        ((s.scheduleId && t.scheduleId === s.scheduleId) ||
+          (s.vaultId && t.vaultId === s.vaultId))
+    );
+    const lifetimeGross = payments.reduce(
+      (sum, p) => sum + (Number.parseFloat(p.amount) || 0),
+      0
+    );
+    const lifetimeFees = payments.reduce(
+      (sum, p) => sum + (Number.parseFloat(p.paypalFee) || 0),
+      0
+    );
+    const lifetimeNet = payments.reduce(
+      (sum, p) =>
+        sum +
+        (p.netAmount !== null && p.netAmount !== undefined
+          ? Number.parseFloat(p.netAmount)
+          : (Number.parseFloat(p.amount) || 0) -
+            (Number.parseFloat(p.paypalFee) || 0)),
+      0
+    );
+    const rebillPayments = payments.filter((p) => p.type === 'REBILL');
+    return {
+      status: s.status || 'ACTIVE',
+      ...s,
+      totalDonated: Number((lifetimeGross || Number.parseFloat(s.amount) || 0).toFixed(2)),
+      totalFees: Number(lifetimeFees.toFixed(2)),
+      totalNet: Number((lifetimeNet || lifetimeGross || Number.parseFloat(s.amount) || 0).toFixed(2)),
+      donationCount: payments.length || 1,
+      rebillCount: Math.max(s.rebillCount || 0, rebillPayments.length),
+      payments,
+    };
   });
 
   let activeSubscriptions = 0;
@@ -883,7 +983,7 @@ function buildDashboardData() {
       activeSubscriptions += 1;
       if (s.frequency === 'WEEK') {
         weeklyRecurringVolume += amt;
-      } else {
+      } else if (s.frequency === 'MONTH') {
         monthlyRecurringVolume += amt;
       }
     }
@@ -896,10 +996,13 @@ function buildDashboardData() {
     paypalMode: PAYPAL_MODE,
     stats: {
       totalDonated: Number(totalDonated.toFixed(2)),
+      paypalFeesTotal: Number(paypalFeesTotal.toFixed(2)),
+      feesCoveredTotal: Number(feesCoveredTotal.toFixed(2)),
       netTotal: Number(netTotal.toFixed(2)),
       initialDonationsTotal: Number(initialDonationsTotal.toFixed(2)),
       rebillsTotal: Number(rebillsTotal.toFixed(2)),
-      totalTransactions: transactions.length,
+      totalTransactions: completedCount,
+      failedCount,
       totalRebills,
       activeSubscriptions,
       pausedSubscriptions,
@@ -911,11 +1014,6 @@ function buildDashboardData() {
     },
     schedules,
     transactions,
-    serverLogs: JourneyLog.getRecentLogs(),
-    capiEvents: getRecentCapiEvents(),
-    counters: JourneyLog.getCounters(),
-    authStats: getAuthStats(),
-    visitors: Array.from(visitors.values()),
     trackingConfig: getTrackingConfig(),
   };
 }
@@ -1226,7 +1324,11 @@ app.patch('/api/subscriptions/:scheduleId', (req, res) => {
     if (amount !== undefined) {
       sub.amount = computeFinalAmount(amount, false);
     }
-    if (frequency === 'WEEK' || frequency === 'MONTH') {
+    if (
+      frequency === 'WEEK' ||
+      frequency === 'MONTH' ||
+      frequency === 'ONE_TIME'
+    ) {
       sub.frequency = frequency;
     }
     if (donorName !== undefined) {

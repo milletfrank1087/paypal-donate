@@ -1,365 +1,412 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Donations &amp; Subscriptions Dashboard — Help my baby</title>
-    <link
-      rel="shortcut icon"
-      sizes="196x196"
-      href="https://www.paypalobjects.com/webstatic/icon/pp196.png"
-    />
-    <link
-      rel="stylesheet"
-      href="https://www.paypalobjects.com/paypal-ui/web/fonts-and-normalize/2-0-0/fonts-and-normalize.min.css"
-    />
-    <link rel="stylesheet" href="/dashboard.css" />
-  </head>
-  <body>
-    <header class="dash-topbar">
-      <div class="dash-topbar-inner">
-        <div class="dash-brand">
-          <img
-            src="https://www.paypalobjects.com/paypal-ui/logos/svg/paypal-mark-color.svg"
-            alt="PayPal"
-            class="dash-brand-logo"
-          />
-          <div>
-            <div class="dash-eyebrow">
-              <span id="dash-mode-badge" class="dash-mode-pill">SANDBOX</span>
-              <span>PayPal Orders v2 · Vault v3 MIT · Meta Donate CAPI</span>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Subscriptions &amp; Profit Cockpit | Help my baby</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/dashboard.css" />
+</head>
+<body class="min-h-screen text-slate-900 selection:bg-indigo-100 selection:text-indigo-900">
+
+  <!-- Toast Container -->
+  <div id="toast-container" class="fixed top-4 right-4 z-[100] space-y-2"></div>
+
+  <!-- Main Workspace -->
+  <main class="min-h-screen">
+    <div class="max-w-[1520px] mx-auto p-3.5 sm:p-6 lg:p-8 space-y-4 sm:space-y-5">
+
+      <!-- Top Operations Bar -->
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4 pb-3 border-b border-gray-200">
+        <div>
+          <div class="flex items-center gap-2 mb-1">
+            <span class="pulse-dot pulse" id="fresh-dot"></span>
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-500">Live Operating Cockpit</span>
+            <span class="text-xs text-slate-300">·</span>
+            <span class="text-xs font-mono font-semibold px-1.5 py-0.5 rounded bg-indigo-50 text-[#635bff] border border-indigo-100" id="paypal-mode-badge">PAYPAL SANDBOX</span>
+            <span class="text-xs text-slate-300">·</span>
+            <span class="text-xs text-slate-400 font-mono" id="last-updated-label">Synced just now</span>
+          </div>
+          <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-[#061b31]">Subscriptions &amp; Profit Cockpit</h1>
+        </div>
+
+        <div class="flex items-center gap-2 sm:gap-2.5 flex-wrap">
+          <a href="/" target="_blank" class="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-md bg-white border border-gray-200 hover:border-gray-300 text-xs font-medium text-slate-700 shadow-xs flex items-center gap-1.5 transition-all">
+            <span>Donor Page ↗</span>
+          </a>
+
+          <button onclick="exportSubscriptionsCSV()" class="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-md bg-white border border-gray-200 hover:border-gray-300 text-xs font-medium text-slate-700 shadow-xs flex items-center gap-1.5 transition-all">
+            <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            <span>Export CSV</span>
+          </button>
+
+          <button onclick="openCreateSubModal()" class="px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-md bg-[#00875a] hover:bg-[#00704a] text-white text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-all">
+            <span>+ New Subscription</span>
+          </button>
+
+          <button id="refresh-btn" onclick="refreshDashboard()" class="px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-md bg-[#635bff] hover:bg-[#533afd] text-white text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-all">
+            <svg id="refresh-icon" class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            <span>Refresh</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Control Deck: Date Range Segmented Control & Search -->
+      <div class="stripe-card p-3 sm:p-3.5">
+        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div class="flex items-center bg-[#eef3f8] p-1 rounded-lg overflow-x-auto scroll-smooth-x" id="range-pills">
+            <button onclick="selectRange('today')" class="stripe-pill inactive" data-range="today">Today</button>
+            <button onclick="selectRange('yesterday')" class="stripe-pill inactive" data-range="yesterday">Yesterday</button>
+            <button onclick="selectRange('last7days')" class="stripe-pill inactive" data-range="last7days">Last 7D</button>
+            <button onclick="selectRange('last30days')" class="stripe-pill inactive" data-range="last30days">Last 30D</button>
+            <button onclick="selectRange('thisMonth')" class="stripe-pill inactive" data-range="thisMonth">This Month</button>
+            <button onclick="selectRange('allTime')" class="stripe-pill active" data-range="allTime">All Time</button>
+          </div>
+
+          <div class="flex items-center gap-2.5 flex-wrap">
+            <div class="flex items-center bg-[#eef3f8] p-1 rounded-lg" id="sub-status-pills">
+              <button onclick="selectSubFilter('ALL')" class="stripe-pill active" data-subfilter="ALL">All <span id="badge-sub-all" class="ml-1 text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">0</span></button>
+              <button onclick="selectSubFilter('ACTIVE')" class="stripe-pill inactive" data-subfilter="ACTIVE">Active <span id="badge-sub-active" class="ml-1 text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-100 text-[#00875a]">0</span></button>
+              <button onclick="selectSubFilter('PAUSED')" class="stripe-pill inactive" data-subfilter="PAUSED">Paused <span id="badge-sub-paused" class="ml-1 text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">0</span></button>
             </div>
-            <h1 class="dash-title">Help my baby — Operations &amp; Rebills Dashboard</h1>
+
+            <input type="text" id="global-search" oninput="handleSearch(this.value)" placeholder="Search donor, email, vault ID, last4..." class="w-full sm:w-64 bg-[#f8fafd] border border-gray-200 text-xs rounded-md py-1.5 px-3 text-[#061b31] placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-[#635bff]" />
           </div>
         </div>
-
-        <div class="dash-topbar-actions">
-          <a href="/" target="_blank" class="dash-btn dash-btn-ghost">
-            Open Live Donation Page &nearr;
-          </a>
-          <button type="button" id="open-create-sub-btn" class="dash-btn dash-btn-gold">
-            + Create Subscription
-          </button>
-          <button type="button" id="refresh-dash-btn" class="dash-btn dash-btn-secondary">
-            Refresh Data
-          </button>
-        </div>
       </div>
-    </header>
 
-    <main class="dash-container">
-      <!-- Notification Banner -->
-      <div id="dash-alert" class="dash-alert" hidden></div>
-
-      <!-- KPI Summary Cards -->
-      <section class="dash-kpi-grid">
-        <div class="dash-kpi-card">
-          <span class="dash-kpi-label">Total Donated (Gross)</span>
-          <strong id="kpi-total-donated" class="dash-kpi-value">$0.00</strong>
-          <span id="kpi-net-subtext" class="dash-kpi-sub">Net after fees: $0.00</span>
-        </div>
-
-        <div class="dash-kpi-card">
-          <span class="dash-kpi-label">Active Subscriptions</span>
-          <strong id="kpi-active-subs" class="dash-kpi-value">0</strong>
-          <span id="kpi-mrr-subtext" class="dash-kpi-sub">Est. Run Rate: $0.00 / mo</span>
-        </div>
-
-        <div class="dash-kpi-card">
-          <span class="dash-kpi-label">MIT Rebills Captured</span>
-          <strong id="kpi-rebills-total" class="dash-kpi-value">$0.00</strong>
-          <span id="kpi-rebills-count" class="dash-kpi-sub">0 recurring charges</span>
-        </div>
-
-        <div class="dash-kpi-card">
-          <span class="dash-kpi-label">Meta Donate CAPI &amp; Visitors</span>
-          <strong id="kpi-visitors-count" class="dash-kpi-value">0 visitors</strong>
-          <span id="kpi-capi-subtext" class="dash-kpi-sub">Pixel + CAPI Active</span>
-        </div>
-      </section>
-
-      <!-- Main Two-Column Workspace -->
-      <div class="dash-main-grid">
-        <!-- Left Column: Subscriptions Management & Transactions Ledger -->
-        <div class="dash-col-primary">
-          <!-- Subscriptions Section -->
-          <section class="dash-panel">
-            <div class="dash-panel-header">
-              <div>
-                <h2 class="dash-panel-title">
-                  Recurring Subscriptions (PayPal Vault v3 MIT)
-                </h2>
-                <p class="dash-panel-subtitle">
-                  Trigger instant Merchant-Initiated Transaction (MIT) rebills, update amounts/cadence, pause, or remove vaulted subscriptions.
-                </p>
-              </div>
-              <div class="dash-filter-pills" id="sub-filter-group">
-                <button type="button" class="dash-pill is-active" data-sub-filter="ALL">All</button>
-                <button type="button" class="dash-pill" data-sub-filter="ACTIVE">Active</button>
-                <button type="button" class="dash-pill" data-sub-filter="PAUSED">Paused</button>
-              </div>
-            </div>
-
-            <div id="subscriptions-list" class="dash-list">
-              <div class="dash-empty">Loading subscriptions...</div>
-            </div>
-          </section>
-
-          <!-- Transactions & Rebills Ledger -->
-          <section class="dash-panel">
-            <div class="dash-panel-header">
-              <div>
-                <h2 class="dash-panel-title">Transactions &amp; Capture Ledger</h2>
-                <p class="dash-panel-subtitle">
-                  Complete history of initial donations (<code>Donate</code> CAPI) and subsequent recurring MIT rebills.
-                </p>
-              </div>
-              <div class="dash-filter-pills" id="tx-filter-group">
-                <button type="button" class="dash-pill is-active" data-tx-filter="ALL">All</button>
-                <button type="button" class="dash-pill" data-tx-filter="INITIAL">Initial Donations</button>
-                <button type="button" class="dash-pill" data-tx-filter="REBILL">MIT Rebills</button>
-              </div>
-            </div>
-
-            <div id="transactions-list" class="dash-list">
-              <div class="dash-empty">Loading transactions...</div>
-            </div>
-          </section>
-        </div>
-
-        <!-- Right Column: Live Server Journey Logs, CAPI Feed & Visitors GeoIP -->
-        <div class="dash-col-secondary">
-          <!-- Live Server Journey Logs -->
-          <section class="dash-panel">
-            <div class="dash-panel-header">
-              <div>
-                <h2 class="dash-panel-title">Live Server Journey Logs</h2>
-                <p class="dash-panel-subtitle">
-                  Real-time funnel stream (<code>TIME MKT DONOR STEP DETAILS</code>)
-                </p>
-              </div>
-              <span id="logs-count-badge" class="dash-count-badge">0 lines</span>
-            </div>
-            <pre id="server-logs-box" class="dash-terminal">Loading server logs...</pre>
-          </section>
-
-          <!-- Meta CAPI & TikTok Events Feed -->
-          <section class="dash-panel">
-            <div class="dash-panel-header">
-              <div>
-                <h2 class="dash-panel-title">Meta Donate CAPI &amp; Pixel Stream</h2>
-                <p class="dash-panel-subtitle">
-                  Server-side Conversions API events with deduplication IDs
-                </p>
-              </div>
-              <span id="capi-count-badge" class="dash-count-badge">0 events</span>
-            </div>
-            <div id="capi-events-list" class="dash-compact-list">
-              <div class="dash-empty">No CAPI events recorded yet.</div>
-            </div>
-          </section>
-
-          <!-- Active Visitor Sessions & GeoIP -->
-          <section class="dash-panel">
-            <div class="dash-panel-header">
-              <div>
-                <h2 class="dash-panel-title">Visitor GeoIP Sessions</h2>
-                <p class="dash-panel-subtitle">
-                  Offline MaxMind GeoIP resolution &amp; device detection
-                </p>
-              </div>
-              <span id="visitors-count-badge" class="dash-count-badge">0 visitors</span>
-            </div>
-            <div id="visitors-list" class="dash-compact-list">
-              <div class="dash-empty">No active visitors yet.</div>
-            </div>
-          </section>
-        </div>
-      </div>
-    </main>
-
-    <!-- Create Subscription Modal -->
-    <div id="create-sub-modal" class="dash-modal-backdrop" hidden>
-      <div class="dash-modal-card">
-        <div class="dash-modal-header">
+      <!-- HERO: True Net Withdrawable Revenue & Recurring Run Rate -->
+      <div class="stripe-card p-6 sm:p-7 bg-gradient-to-r from-white to-[#fbfcff]">
+        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div>
-            <h3 class="dash-modal-title">Create Recurring Subscription</h3>
-            <p class="dash-modal-subtitle">
-              Create a subscription by vaulting a card via PayPal Vault v3 or linking an existing Vault Token ID.
+            <div class="flex items-center gap-2 mb-2">
+              <span class="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-50 text-[#00875a] uppercase tracking-wider border border-emerald-100">Liquid Net Collected</span>
+              <span class="text-xs font-mono font-bold text-slate-500">USD ($)</span>
+              <span class="text-xs text-slate-300">·</span>
+              <span class="text-xs text-slate-400 font-medium" id="hero-window">All Time</span>
+            </div>
+
+            <div class="flex items-baseline gap-3 flex-wrap">
+              <p class="text-4xl sm:text-6xl font-bold text-[#061b31] tracking-tight tabular-numbers" id="hero-net">$0.00</p>
+            </div>
+
+            <p class="text-xs text-slate-500 mt-2 font-medium flex items-center gap-1.5">
+              <span class="inline-block w-2 h-2 rounded-full bg-[#00875a]"></span>
+              Gross Donations &amp; MIT Rebills − PayPal Processing Fees = Net Withdrawable Balance
             </p>
           </div>
-          <button type="button" id="close-create-sub-btn" class="dash-modal-close">&times;</button>
+
+          <div class="flex items-center gap-6 border-t lg:border-t-0 lg:border-l border-slate-100 pt-4 lg:pt-0 lg:pl-8 flex-wrap">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-0.5">Est. Monthly Run Rate</p>
+              <p class="text-2xl sm:text-3xl font-bold text-[#635bff] tabular-numbers" id="hero-mrr">$0.00</p>
+              <p class="text-[11px] text-slate-400 mt-0.5 font-medium" id="hero-mrr-sub">0 active subscriptions</p>
+            </div>
+            <div class="h-10 w-[1px] bg-slate-200 hidden sm:block"></div>
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-0.5">Net Margin</p>
+              <p class="text-2xl sm:text-3xl font-bold text-[#00875a] tabular-numbers" id="hero-margin">0.0%</p>
+              <p class="text-[11px] text-slate-400 mt-0.5 font-medium">after PayPal fees</p>
+            </div>
+            <div class="h-10 w-[1px] bg-slate-200 hidden sm:block"></div>
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-0.5">Settled Charges</p>
+              <p class="text-2xl sm:text-3xl font-bold text-[#061b31] tabular-numbers" id="hero-txns">0</p>
+              <p class="text-[11px] text-slate-400 mt-0.5 font-medium" id="hero-txns-sub">0 initial · 0 rebills</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4-Card Financial Waterfall Pipeline -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5">
+        <!-- 1. Gross Revenue -->
+        <div class="stripe-card p-3.5 sm:p-4 space-y-1.5">
+          <div class="flex items-center justify-between text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            <span>1. Gross Collected</span>
+            <span class="text-[10px] sm:text-[11px] font-mono text-slate-400 font-normal" id="wf-gross-count">0 txns</span>
+          </div>
+          <p class="text-lg sm:text-2xl lg:text-3xl font-bold text-[#061b31] tabular-numbers truncate" id="wf-gross">$0.00</p>
+          <div class="pt-1.5 border-t border-slate-100 flex items-center justify-between text-[10px] sm:text-xs text-slate-500">
+            <span>Fees covered by donors:</span>
+            <span class="font-semibold text-blue-600 font-mono" id="wf-tips">$0.00</span>
+          </div>
         </div>
 
-        <form id="create-sub-form" class="dash-form">
-          <div class="dash-mode-tabs">
-            <button
-              type="button"
-              class="dash-mode-tab is-active"
-              data-create-mode="card"
-            >
-              Vault New Card + Initial Charge
-            </button>
-            <button
-              type="button"
-              class="dash-mode-tab"
-              data-create-mode="vault"
-            >
-              Use Existing PayPal Vault ID
-            </button>
+        <!-- 2. PayPal Processor Fees -->
+        <div class="stripe-card p-3.5 sm:p-4 space-y-1.5">
+          <div class="flex items-center justify-between text-[10px] sm:text-xs font-semibold text-[#df1b41] uppercase tracking-wider">
+            <span>2. PayPal Fees</span>
+            <span class="text-[10px] sm:text-[11px] font-mono font-semibold" id="wf-fee-pct">0.0%</span>
+          </div>
+          <p class="text-lg sm:text-2xl lg:text-3xl font-bold text-[#df1b41] tabular-numbers truncate" id="wf-fees">−$0.00</p>
+          <div class="pt-1.5 border-t border-slate-100 flex items-center justify-between text-[10px] sm:text-xs text-slate-500">
+            <span>Avg order (AOV):</span>
+            <span class="text-slate-700 font-mono font-semibold" id="wf-aov">$0.00</span>
+          </div>
+        </div>
+
+        <!-- 3. MIT Rebills Captured -->
+        <div class="stripe-card p-3.5 sm:p-4 space-y-1.5">
+          <div class="flex items-center justify-between text-[10px] sm:text-xs font-semibold text-[#635bff] uppercase tracking-wider">
+            <span>3. MIT Rebills</span>
+            <span class="text-[10px] sm:text-[11px] font-mono font-semibold" id="wf-rebills-count">0 rebills</span>
+          </div>
+          <p class="text-lg sm:text-2xl lg:text-3xl font-bold text-[#635bff] tabular-numbers truncate" id="wf-rebills">$0.00</p>
+          <div class="pt-1.5 border-t border-slate-100 flex items-center justify-between text-[10px] sm:text-xs text-slate-500">
+            <span>Initial checkouts:</span>
+            <span class="font-mono text-slate-700 font-semibold" id="wf-initial">$0.00</span>
+          </div>
+        </div>
+
+        <!-- 4. Net Revenue -->
+        <div class="stripe-card p-3.5 sm:p-4 space-y-1.5 bg-[#edf9f3] border-[#c2ecd7]">
+          <div class="flex items-center justify-between text-[10px] sm:text-xs font-semibold text-[#00875a] uppercase tracking-wider">
+            <span>4. Net Profit</span>
+            <span class="text-[10px] sm:text-[11px] font-mono font-bold" id="wf-margin-badge">0.0%</span>
+          </div>
+          <p class="text-lg sm:text-2xl lg:text-3xl font-bold text-[#00875a] tabular-numbers truncate" id="wf-net">$0.00</p>
+          <div class="pt-1.5 border-t border-[#d5f3e4] flex items-center justify-between text-[10px] sm:text-xs text-[#00875a]">
+            <span>Weekly / Monthly plan:</span>
+            <span class="font-mono font-semibold" id="wf-cadence-split">$0/wk · $0/mo</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- PRIMARY SECTION: Subscriptions & Vaulted Customers Management -->
+      <div class="stripe-card p-5 space-y-3.5">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div class="flex items-center gap-2">
+              <h2 class="text-base font-bold text-[#061b31]">Subscriptions &amp; Vaulted Customers</h2>
+              <span class="text-xs font-mono font-bold px-2 py-0.5 rounded bg-indigo-50 text-[#635bff] border border-indigo-100" id="subs-count-badge">0 Vaulted</span>
+            </div>
+            <p class="text-xs text-slate-400">Trigger instant PayPal Vault v3 MIT rebills, adjust recurring amounts or cadence, pause/resume, or inspect full donor history.</p>
+          </div>
+        </div>
+
+        <div class="scroll-smooth-x rounded border border-slate-200">
+          <table class="w-full stripe-table text-left">
+            <thead>
+              <tr>
+                <th class="sticky-col">Donor / Customer</th>
+                <th>Card &amp; Vault Token</th>
+                <th>Plan Amount &amp; Cadence</th>
+                <th class="text-right">Total Charged</th>
+                <th class="text-right">Rebills</th>
+                <th>Last Charged</th>
+                <th>Status</th>
+                <th class="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="subscriptions-tbody">
+              <tr><td colspan="8" class="text-center py-8 text-slate-400 text-xs">Loading subscriptions…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- SECONDARY SECTION: Settled Transactions & Rebill Feed -->
+      <div class="stripe-card p-5 space-y-3.5">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div class="flex items-center gap-2">
+              <h2 class="text-base font-bold text-[#061b31]">Transactions &amp; Rebill Ledger</h2>
+              <span class="text-xs font-mono font-bold px-2 py-0.5 rounded bg-emerald-50 text-[#00875a] border border-emerald-100" id="txns-count-badge">0 Completed</span>
+              <span class="hidden text-xs font-mono font-bold px-2 py-0.5 rounded bg-red-50 text-[#df1b41] border border-red-100" id="txns-failed-badge">0 Failed</span>
+            </div>
+            <p class="text-xs text-slate-400">Completed initial donations and merchant-initiated (MIT) recurring rebills with PayPal fee breakdown.</p>
           </div>
 
-          <input type="hidden" id="sub-create-mode" value="card" />
-
-          <div class="dash-form-row">
-            <div class="dash-form-group">
-              <label for="sub-donor-name">Donor Name</label>
-              <input
-                type="text"
-                id="sub-donor-name"
-                placeholder="Alex Mercer"
-                value="Alex Mercer"
-                required
-              />
+          <div class="flex items-center gap-3 flex-wrap">
+            <div class="flex items-center bg-[#eef3f8] p-0.5 rounded-md text-xs font-semibold">
+              <button onclick="selectTxFilter('ALL')" class="stripe-pill active" data-txfilter="ALL">All</button>
+              <button onclick="selectTxFilter('INITIAL')" class="stripe-pill inactive" data-txfilter="INITIAL">Initial</button>
+              <button onclick="selectTxFilter('REBILL')" class="stripe-pill inactive" data-txfilter="REBILL">MIT Rebills</button>
             </div>
-            <div class="dash-form-group">
-              <label for="sub-donor-email">Donor Email (optional)</label>
-              <input
-                type="email"
-                id="sub-donor-email"
-                placeholder="donor@example.com"
-              />
-            </div>
+            <label class="flex items-center gap-1.5 text-xs text-slate-600 select-none cursor-pointer">
+              <input type="checkbox" id="txn-show-failed" checked onchange="toggleShowFailed(this.checked)" class="accent-[#df1b41]" />
+              Show failed
+            </label>
           </div>
+        </div>
 
-          <div class="dash-form-row">
-            <div class="dash-form-group">
-              <label for="sub-amount">Recurring Amount (USD)</label>
-              <input
-                type="number"
-                id="sub-amount"
-                step="0.01"
-                min="1"
-                value="25.00"
-                required
-              />
-            </div>
-            <div class="dash-form-group">
-              <label for="sub-frequency">Billing Cadence</label>
-              <select id="sub-frequency">
-                <option value="WEEK">Weekly</option>
-                <option value="MONTH">Monthly</option>
-              </select>
-            </div>
-          </div>
+        <div class="scroll-smooth-x rounded border border-slate-200 max-h-[460px] overflow-y-auto">
+          <table class="w-full stripe-table text-left">
+            <thead>
+              <tr>
+                <th class="sticky-col">Donor / Customer</th>
+                <th>Type</th>
+                <th>Campaign</th>
+                <th>Card / Method</th>
+                <th class="text-right">Gross</th>
+                <th class="text-right">PayPal Fee</th>
+                <th class="text-right">Net Revenue</th>
+                <th>Capture / Ref ID</th>
+                <th class="text-right">Timestamp</th>
+              </tr>
+            </thead>
+            <tbody id="transactions-tbody" class="font-mono text-xs">
+              <tr><td colspan="9" class="text-center py-8 text-slate-400">Loading transactions…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-          <!-- Mode 1: New Card Fields -->
-          <div id="create-mode-card-fields">
-            <div class="dash-quick-fill">
-              <span>Quick-fill Sandbox Card:</span>
-              <button
-                type="button"
-                class="dash-mini-btn"
-                data-fill-card="4111111111111111"
-                data-fill-exp="2028-12"
-                data-fill-cvv="123"
-              >
-                Visa ••1111
-              </button>
-              <button
-                type="button"
-                class="dash-mini-btn"
-                data-fill-card="5555555555554444"
-                data-fill-exp="2028-12"
-                data-fill-cvv="123"
-              >
-                Mastercard ••4444
-              </button>
-              <button
-                type="button"
-                class="dash-mini-btn"
-                data-fill-card="378282246310005"
-                data-fill-exp="2028-12"
-                data-fill-cvv="1234"
-              >
-                Amex ••0005
-              </button>
-            </div>
+    </div>
+  </main>
 
-            <div class="dash-form-group">
-              <label for="sub-card-number">Card Number</label>
-              <input
-                type="text"
-                id="sub-card-number"
-                placeholder="4111111111111111"
-                value="4111111111111111"
-              />
-            </div>
+  <!-- MODAL 1: Rebill Customer (MIT Charge) -->
+  <div id="rebill-modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true">
+    <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-xs" onclick="closeRebillModal()"></div>
+    <div class="absolute inset-x-4 top-1/2 -translate-y-1/2 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-w-md bg-white rounded-xl shadow-2xl border border-gray-200 p-6 space-y-4">
+      <div class="flex items-center justify-between border-b border-gray-100 pb-3">
+        <div>
+          <h3 class="text-lg font-bold text-[#061b31]">Charge MIT Rebill</h3>
+          <p class="text-xs text-slate-400">Merchant-Initiated Transaction via PayPal Vault v3</p>
+        </div>
+        <button onclick="closeRebillModal()" class="p-1.5 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100">✕</button>
+      </div>
 
-            <div class="dash-form-row">
-              <div class="dash-form-group">
-                <label for="sub-card-expiry">Expiry (YYYY-MM)</label>
-                <input
-                  type="text"
-                  id="sub-card-expiry"
-                  placeholder="2028-12"
-                  value="2028-12"
-                />
-              </div>
-              <div class="dash-form-group">
-                <label for="sub-card-cvv">CVV</label>
-                <input
-                  type="text"
-                  id="sub-card-cvv"
-                  placeholder="123"
-                  value="123"
-                />
-              </div>
-            </div>
-          </div>
+      <div id="rebill-customer-info" class="p-3.5 bg-[#f8fafd] rounded-lg border border-slate-200 text-xs space-y-1"></div>
 
-          <!-- Mode 2: Existing Vault Token ID -->
-          <div id="create-mode-vault-fields" hidden>
-            <div class="dash-form-group">
-              <label for="sub-vault-id">PayPal Vault v3 Token ID</label>
-              <input
-                type="text"
-                id="sub-vault-id"
-                placeholder="e.g. 3ct01473ef209841a"
-              />
-            </div>
-            <div class="dash-form-row">
-              <div class="dash-form-group">
-                <label for="sub-card-brand">Card Brand</label>
-                <input type="text" id="sub-card-brand" value="VISA" />
-              </div>
-              <div class="dash-form-group">
-                <label for="sub-card-last4">Card Last 4</label>
-                <input type="text" id="sub-card-last4" value="1111" maxlength="4" />
-              </div>
-            </div>
-          </div>
+      <div>
+        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5" for="rebill-amount-input">Charge Amount (USD $)</label>
+        <input type="number" id="rebill-amount-input" min="1" step="0.01" placeholder="25.00" class="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg font-mono text-base font-bold text-[#061b31] focus:border-[#635bff] focus:ring-2 focus:ring-[#635bff]/20 focus:outline-none" />
+      </div>
 
-          <div class="dash-modal-footer">
-            <button
-              type="button"
-              id="cancel-create-sub-btn"
-              class="dash-btn dash-btn-secondary"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              id="submit-create-sub-btn"
-              class="dash-btn dash-btn-gold"
-            >
-              Create Subscription
-            </button>
-          </div>
-        </form>
+      <div class="flex items-center gap-2.5 pt-2">
+        <button type="button" onclick="closeRebillModal()" class="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
+        <button type="button" id="rebill-confirm-btn" onclick="confirmRebillCharge()" class="flex-1 px-4 py-2.5 bg-[#635bff] hover:bg-[#533afd] text-white rounded-lg text-xs font-semibold shadow-sm">⚡ Charge Card Now</button>
       </div>
     </div>
+  </div>
 
-    <script src="/dashboard.js"></script>
-  </body>
+  <!-- MODAL 2: Customer Detail & Rebill History -->
+  <div id="detail-modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true">
+    <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-xs" onclick="closeDetailModal()"></div>
+    <div class="absolute inset-x-3 bottom-0 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-w-2xl bg-white rounded-t-2xl sm:rounded-xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col border border-gray-200">
+      <div class="p-5 border-b border-gray-100 flex items-center justify-between bg-slate-50/70">
+        <div>
+          <h3 class="text-base font-bold text-[#061b31]" id="detail-modal-title">Subscription &amp; Donor Details</h3>
+          <p class="text-[11px] text-slate-400 font-mono" id="detail-modal-subtitle">Schedule ID</p>
+        </div>
+        <button onclick="closeDetailModal()" class="p-1.5 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100">✕</button>
+      </div>
+      <div class="p-5 overflow-y-auto flex-1 space-y-5" id="detail-modal-body"></div>
+    </div>
+  </div>
+
+  <!-- MODAL 3: Create New Subscription -->
+  <div id="create-sub-modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true">
+    <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-xs" onclick="closeCreateSubModal()"></div>
+    <div class="absolute inset-x-4 top-1/2 -translate-y-1/2 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-w-lg bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden">
+      <div class="p-5 border-b border-gray-100 flex items-center justify-between bg-slate-50/70">
+        <div>
+          <h3 class="text-base font-bold text-[#061b31]">Create Subscription</h3>
+          <p class="text-xs text-slate-400">Vault a new card or attach an existing PayPal Vault v3 token</p>
+        </div>
+        <button onclick="closeCreateSubModal()" class="p-1.5 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100">✕</button>
+      </div>
+
+      <form id="create-sub-form" class="p-5 space-y-4">
+        <div class="flex bg-[#eef3f8] p-1 rounded-lg">
+          <button type="button" id="mode-card-btn" onclick="switchCreateMode('card')" class="flex-1 stripe-pill active text-center">Vault New Card + Charge</button>
+          <button type="button" id="mode-vault-btn" onclick="switchCreateMode('vault')" class="flex-1 stripe-pill inactive text-center">Existing Vault Token ID</button>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Donor Name</label>
+            <input type="text" id="sub-donor-name" value="Generous Supporter" required class="w-full px-3 py-2 border border-gray-200 rounded-md text-xs text-[#061b31] focus:border-[#635bff] focus:outline-none" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Donor Email (optional)</label>
+            <input type="email" id="sub-donor-email" placeholder="donor@example.com" class="w-full px-3 py-2 border border-gray-200 rounded-md text-xs text-[#061b31] focus:border-[#635bff] focus:outline-none" />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Recurring Amount (USD $)</label>
+            <input type="number" id="sub-amount" value="25.00" min="1" step="0.01" required class="w-full px-3 py-2 border border-gray-200 rounded-md text-xs font-mono font-bold text-[#061b31] focus:border-[#635bff] focus:outline-none" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Billing Cadence</label>
+            <select id="sub-frequency" class="w-full px-3 py-2 border border-gray-200 rounded-md text-xs font-medium text-[#061b31] focus:border-[#635bff] focus:outline-none">
+              <option value="MONTH">Monthly</option>
+              <option value="WEEK">Weekly</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Mode A: New Card -->
+        <div id="create-card-fields" class="space-y-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Card Number</label>
+            <input type="text" id="sub-card-number" placeholder="4032 0399 2223 1111" class="w-full px-3 py-2 border border-gray-200 rounded-md text-xs font-mono text-[#061b31] focus:border-[#635bff] focus:outline-none" />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Expiry (YYYY-MM)</label>
+              <input type="text" id="sub-card-expiry" placeholder="2028-12" value="2028-12" class="w-full px-3 py-2 border border-gray-200 rounded-md text-xs font-mono text-[#061b31] focus:border-[#635bff] focus:outline-none" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">CVV</label>
+              <input type="text" id="sub-card-cvv" placeholder="123" value="123" class="w-full px-3 py-2 border border-gray-200 rounded-md text-xs font-mono text-[#061b31] focus:border-[#635bff] focus:outline-none" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Mode B: Existing Vault Token -->
+        <div id="create-vault-fields" class="space-y-3 hidden">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">PayPal Vault v3 Token ID</label>
+            <input type="text" id="sub-vault-id" placeholder="e.g. 2tx31481tn4721330" class="w-full px-3 py-2 border border-gray-200 rounded-md text-xs font-mono text-[#061b31] focus:border-[#635bff] focus:outline-none" />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Card Brand</label>
+              <select id="sub-card-brand" class="w-full px-3 py-2 border border-gray-200 rounded-md text-xs text-[#061b31]">
+                <option value="VISA">VISA</option>
+                <option value="MASTERCARD">MASTERCARD</option>
+                <option value="AMEX">AMEX</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Last 4 Digits</label>
+              <input type="text" id="sub-card-last4" value="1111" maxlength="4" class="w-full px-3 py-2 border border-gray-200 rounded-md text-xs font-mono text-[#061b31]" />
+            </div>
+          </div>
+        </div>
+
+        <div id="create-sub-error" class="hidden p-3 rounded-md bg-red-50 border border-red-200 text-xs text-[#df1b41]"></div>
+
+        <div class="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-100">
+          <button type="button" onclick="closeCreateSubModal()" class="px-4 py-2 border border-gray-200 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button type="submit" id="create-sub-submit-btn" class="px-4 py-2 bg-[#00875a] hover:bg-[#00704a] text-white rounded-md text-xs font-semibold shadow-xs">Create Subscription</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 4: Delete Subscription Confirmation -->
+  <div id="delete-modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true">
+    <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-xs" onclick="closeDeleteModal()"></div>
+    <div class="absolute inset-x-4 top-1/2 -translate-y-1/2 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-w-md bg-white rounded-xl shadow-2xl border border-gray-200 p-6 space-y-4">
+      <h3 class="text-lg font-bold text-[#df1b41]">Remove Subscription</h3>
+      <p class="text-xs text-slate-500">This removes the recurring subscription schedule from the cockpit. Past settled transactions remain in the ledger.</p>
+      <div id="delete-sub-info" class="p-3.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-800 space-y-1"></div>
+      <div class="flex gap-2.5 pt-1">
+        <button type="button" onclick="closeDeleteModal()" class="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
+        <button type="button" id="delete-confirm-btn" onclick="confirmDeleteSub()" class="flex-1 px-4 py-2.5 bg-[#df1b41] hover:bg-red-700 text-white rounded-lg text-xs font-semibold">Remove Subscription</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/dashboard.js"></script>
+</body>
 </html>
