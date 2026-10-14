@@ -582,11 +582,30 @@
             openThankYouModal(captureData._recordedTransaction);
           }
         },
+        onCancel: () => {
+          if (window.Tracking) {
+            window.Tracking.trackPaymentEvent(
+              'modal_close',
+              'closed PayPal popup window without paying',
+              getFinalAmountNumber() || null,
+              'paypal'
+            );
+          }
+        },
         onError: (err) => {
+          const rawErr = String(err?.message || err || 'PayPal checkout error');
           showStatus(
             err?.message || 'PayPal checkout encountered an error.',
             'error'
           );
+          if (window.Tracking) {
+            window.Tracking.trackPaymentEvent(
+              'paypal_error',
+              rawErr.slice(0, 220),
+              getFinalAmountNumber() || null,
+              'paypal'
+            );
+          }
         },
       });
 
@@ -652,6 +671,7 @@
           },
           createOrder: async () => {
             activeAttemptStart = Date.now();
+            state.errorReportedForAttempt = false;
             if (window.CheckoutMonitor) {
               window.CheckoutMonitor.stage('submitting');
             }
@@ -688,12 +708,18 @@
             }
           },
           onError: (err) => {
+            const rawErr = String(err?.message || err || '').replace(/\s+/g, ' ');
             const msg = formatCardErrorMessage(err);
             showStatus(msg, 'error');
-            if (window.Tracking) {
+            if (!state.errorReportedForAttempt && window.Tracking) {
+              state.errorReportedForAttempt = true;
+              const detailPayload =
+                rawErr && rawErr !== msg
+                  ? `${msg} [${rawErr.slice(0, 180)}]`
+                  : msg;
               window.Tracking.trackPaymentEvent(
                 'card_error',
-                msg,
+                detailPayload,
                 getFinalAmountNumber() || null,
                 'card'
               );
@@ -724,10 +750,21 @@
             .CVVField({ placeholder: '3-4 digits' })
             .render('#card-cvv-field-container');
           syncCardDrawerView();
+        } else if (window.Tracking) {
+          window.Tracking.trackPaymentEvent(
+            'sdk_error',
+            'PayPal CardFields isEligible() returned false for this device/merchant',
+            null,
+            'card'
+          );
         }
       }
     } catch (err) {
-      showStatus(err.message || 'Unable to initialize PayPal SDK.', 'error');
+      const errMsg = err?.message || 'Unable to initialize PayPal SDK.';
+      showStatus(errMsg, 'error');
+      if (window.Tracking) {
+        window.Tracking.trackPaymentEvent('sdk_error', errMsg, null, 'sdk');
+      }
     }
   }
 
@@ -774,6 +811,7 @@
         }
       }
 
+      state.errorReportedForAttempt = false;
       cardFieldsSubmitBtn.disabled = true;
       cardSubmitLabel.innerHTML =
         '<span class="btn-spinner" aria-hidden="true"></span>Processing...';
@@ -781,7 +819,18 @@
         cardholderName: 'Generous Supporter',
       });
     } catch (err) {
-      showStatus(formatCardErrorMessage(err), 'error');
+      const msg = formatCardErrorMessage(err);
+      showStatus(msg, 'error');
+      if (!state.errorReportedForAttempt && window.Tracking) {
+        state.errorReportedForAttempt = true;
+        const rawErr = String(err?.message || err || '').replace(/\s+/g, ' ');
+        window.Tracking.trackPaymentEvent(
+          'card_error',
+          rawErr && rawErr !== msg ? `${msg} [${rawErr.slice(0, 180)}]` : msg,
+          getFinalAmountNumber() || null,
+          'card'
+        );
+      }
     } finally {
       cardFieldsSubmitBtn.disabled = false;
       updateUI();

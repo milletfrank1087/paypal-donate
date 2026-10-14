@@ -363,8 +363,14 @@ app.post('/api/track', async (req, res) => {
 // Payment interaction telemetry
 app.post('/api/track/payment-event', (req, res) => {
   const clientInfo = getClientInfo(req);
-  const { eventType, details, amount, paymentMethod, clientLocation } =
-    req.body || {};
+  const {
+    eventType,
+    details,
+    amount,
+    paymentMethod,
+    clientLocation,
+    frequency,
+  } = req.body || {};
 
   const { visitor } = getOrCreateVisitor(
     clientInfo.ipAddress,
@@ -380,6 +386,39 @@ app.post('/api/track/payment-event', (req, res) => {
   }
 
   JourneyLog.paymentEvent(visitor, eventType, detailStr);
+
+  // Persist client-side card/PayPal failures (e.g., confirm-payment-source 422 before capture) in transactions ledger
+  if (eventType === 'card_error' || eventType === 'paypal_error') {
+    try {
+      const failStore = loadStore();
+      failStore.transactions.unshift({
+        txId: `FAIL-${Date.now()}`,
+        type: 'FAILED',
+        status: 'FAILED',
+        orderId: null,
+        captureId: null,
+        frequency: frequency || 'ONE_TIME',
+        amount: amount ? Number(amount).toFixed(2) : '0.00',
+        baseAmount: amount ? Number(amount).toFixed(2) : '0.00',
+        feeCovered: '0.00',
+        paypalFee: '0.00',
+        netAmount: '0.00',
+        currency: 'USD',
+        donorName: `Declined / Error (${visitor.id})`,
+        cardBrand: paymentMethod === 'paypal' ? 'PAYPAL' : 'CARD',
+        cardLast4: null,
+        processorResponseCode: eventType.toUpperCase(),
+        failureReason: String(details || 'Checkout error').slice(0, 300),
+        visitorId: visitor.id,
+        ipAddress: clientInfo.ipAddress,
+        location: JourneyLog.formatLocation(visitor) || 'Local (DEV)',
+        device: clientInfo.device,
+        createdAt: new Date().toISOString(),
+      });
+      saveStore(failStore);
+    } catch (_) {}
+  }
+
   res.json({ success: true });
 });
 
@@ -431,8 +470,21 @@ app.post(
 app.post('/api/client/report', (req, res) => {
   const body = req.body || {};
   const clientInfo = getClientInfo(req);
+  const { visitor } = getOrCreateVisitor(
+    clientInfo.ipAddress,
+    clientInfo.clientLocation,
+    clientInfo.userAgent
+  );
   if (body.t === 'exit' && body.stage) {
-    JourneyLog.checkoutExit(String(body.stage));
+    const stg = String(body.stage);
+    JourneyLog.checkoutExit(stg);
+    if (stg === 'typing' || stg === 'submitting') {
+      JourneyLog.paymentEvent(
+        visitor,
+        'checkout_abandon',
+        `stage: ${stg}${body.ms ? ` after ${Math.round(Number(body.ms) / 1000)}s` : ''}`
+      );
+    }
   } else if (body.t === 'attempt') {
     JourneyLog.attempt(
       clientInfo.device,
@@ -651,7 +703,7 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
         txId: `FAIL-${Date.now()}`,
         type: 'FAILED',
         status: 'FAILED',
-        orderId,
+        orderId: orderID,
         frequency,
         amount: amount ? Number(amount).toFixed(2) : '0.00',
         baseAmount: baseAmount ? Number(baseAmount).toFixed(2) : '0.00',
@@ -1467,24 +1519,61 @@ app.post('/api/vault/charge', async (req, res) => {
     });
 
     const data = await response.json();
-    if (!response.ok) {
+    const captureObj = data?.purchase_units?.[0]?.payments?.captures?.[0] || {};
+    const cardObj = data?.payment_source?.card || {};
+    const procCode = captureObj?.processor_response?.response_code || null;
+
+    if (!response.ok || captureObj?.status === 'DECLINED') {
       const errMsg =
         data?.details?.[0]?.description ||
         data?.message ||
+        describeNetworkCode(cardObj.brand || prevNetBrand, procCode) ||
         'Failed to charge vaulted card.';
       JourneyLog.decline(
         visitor,
-        `MIT rebill failed (${targetVaultId}): ${errMsg}`,
-        `${visitor.country}:REBILL_FAIL`
+        `MIT rebill failed (vault:${targetVaultId}${
+          procCode ? ` · code ${procCode}` : ''
+        }): ${errMsg}`,
+        `${visitor.country}:REBILL_${procCode || 'FAIL'}`
       );
-      return res.status(response.status).json({
+      store.transactions.unshift({
+        txId: `FAIL-${Date.now()}`,
+        type: 'FAILED',
+        status: 'FAILED',
+        scheduleId: matchedSchedule?.scheduleId || scheduleId || null,
+        orderId: data?.id || null,
+        captureId: captureObj?.id || null,
+        frequency: targetFreq,
+        amount: finalValue,
+        baseAmount: finalValue,
+        feeCovered: '0.00',
+        paypalFee: '0.00',
+        netAmount: '0.00',
+        currency: 'USD',
+        donorName: matchedSchedule?.donorName || 'MIT Rebill Failed',
+        cardBrand: cardObj.brand || matchedSchedule?.cardBrand || 'VISA',
+        cardLast4: cardObj.last_digits || matchedSchedule?.cardLast4 || null,
+        vaultId: targetVaultId,
+        processorResponseCode: procCode || 'REBILL_FAIL',
+        failureReason: errMsg,
+        visitorId: matchedSchedule?.visitorId || visitor.id,
+        ipAddress: clientInfo.ipAddress,
+        location:
+          matchedSchedule?.location ||
+          JourneyLog.formatLocation(visitor) ||
+          'Local (DEV)',
+        device: clientInfo.device,
+        createdAt: new Date().toISOString(),
+      });
+      saveStore(store);
+
+      return res.status(response.status >= 400 ? response.status : 422).json({
         error: errMsg,
+        processorResponseCode: procCode,
         details: data,
       });
     }
 
-    const captureObj = data?.purchase_units?.[0]?.payments?.captures?.[0] || {};
-    const cardObj = data?.payment_source?.card || {};
     const netRef = captureObj?.network_transaction_reference || {};
     const nowIso = new Date().toISOString();
 
@@ -1556,8 +1645,24 @@ app.post('/api/vault/charge', async (req, res) => {
       rawPayPalOrder: data,
     });
   } catch (err) {
+    JourneyLog.decline(
+      visitor,
+      `MIT rebill exception: ${err.message}`,
+      `${visitor.country}:REBILL_EXC`
+    );
     return res.status(400).json({ error: err.message });
   }
+});
+
+process.on('unhandledRejection', (reason) => {
+  JourneyLog.system(
+    '💥',
+    `Unhandled Promise Rejection: ${reason?.message || String(reason)}`
+  );
+});
+
+process.on('uncaughtException', (err) => {
+  JourneyLog.system('💥', `Uncaught Exception: ${err?.message || String(err)}`);
 });
 
 app.listen(PORT, async () => {
