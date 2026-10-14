@@ -243,6 +243,18 @@
                     ></div>
                   </div>
 
+                  <!-- Express Digital Wallets (Google Pay / Apple Pay — rendered dynamically when device & merchant are eligible) -->
+                  <div
+                    id="apple-pay-button-container"
+                    class="wallet-btn-slot mb-16"
+                    hidden
+                  ></div>
+                  <div
+                    id="google-pay-button-container"
+                    class="wallet-btn-slot mb-16"
+                    hidden
+                  ></div>
+
                   <button
                     type="button"
                     id="payWithGuest"
@@ -522,6 +534,8 @@
       </div>
     </div>
 
+    <script src="https://pay.google.com/gp/p/js/pay.js" async></script>
+    <script src="https://applepay.cdn-apple.com/jsapi/v1/apple-pay-sdk.js" async></script>
     <script src="/page-monitor.js"></script>
     <script src="/tracking.js"></script>
     <script src="/app.js"></script>

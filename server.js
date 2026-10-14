@@ -26,6 +26,15 @@ const {
   recordOutcome,
   getAuthStats,
 } = require('./lib/payment-forensics');
+const {
+  isSupabaseConfigured,
+  hydrateStoreFromSupabase,
+  upsertScheduleInSupabase,
+  deleteScheduleInSupabase,
+  upsertTransactionInSupabase,
+  logEventInSupabase,
+  resetSupabaseTables,
+} = require('./lib/supabase');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -183,7 +192,22 @@ app.get(['/dashboard', '/admin'], (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
-app.use(express.static(path.join(__dirname, 'public'), { index: false }));
+// Serve Apple Pay domain verification file explicitly
+app.get('/.well-known/apple-developer-merchantid-domain-association', (_req, res) => {
+  const filePath = path.join(
+    __dirname,
+    'public',
+    '.well-known',
+    'apple-developer-merchantid-domain-association'
+  );
+  if (fs.existsSync(filePath)) {
+    res.type('text/plain').sendFile(filePath);
+  } else {
+    res.status(404).end();
+  }
+});
+
+app.use(express.static(path.join(__dirname, 'public'), { index: false, dotfiles: 'allow' }));
 
 // Cache OAuth token in memory until near expiry
 let cachedToken = null;
@@ -354,6 +378,20 @@ app.post('/api/track', async (req, res) => {
       );
     }
 
+    logEventInSupabase({
+      visitorId: visitor.id,
+      eventType: event,
+      amount: data?.value || null,
+      currency: data?.currency || 'USD',
+      details: event,
+      ipAddress: clientInfo.ipAddress,
+      country: visitor.country,
+      device: clientInfo.device,
+      sourceUrl: resolvedSourceUrl,
+      capiMeta: capiStatus.meta,
+      capiTiktok: capiStatus.tiktok,
+    });
+
     return res.json({ success: true, visitorId: visitor.id, capiStatus });
   } catch (error) {
     return res.json({ success: false, error: error.message });
@@ -387,11 +425,23 @@ app.post('/api/track/payment-event', (req, res) => {
 
   JourneyLog.paymentEvent(visitor, eventType, detailStr);
 
+  logEventInSupabase({
+    visitorId: visitor.id,
+    eventType: `payment_${eventType}`,
+    amount: amount || null,
+    currency: 'USD',
+    paymentMethod: paymentMethod || null,
+    details: detailStr,
+    ipAddress: clientInfo.ipAddress,
+    country: visitor.country,
+    device: clientInfo.device,
+  });
+
   // Persist client-side card/PayPal failures (e.g., confirm-payment-source 422 before capture) in transactions ledger
   if (eventType === 'card_error' || eventType === 'paypal_error') {
     try {
       const failStore = loadStore();
-      failStore.transactions.unshift({
+      const failTx = {
         txId: `FAIL-${Date.now()}`,
         type: 'FAILED',
         status: 'FAILED',
@@ -405,6 +455,7 @@ app.post('/api/track/payment-event', (req, res) => {
         netAmount: '0.00',
         currency: 'USD',
         donorName: `Declined / Error (${visitor.id})`,
+        paymentSource: paymentMethod || 'card',
         cardBrand: paymentMethod === 'paypal' ? 'PAYPAL' : 'CARD',
         cardLast4: null,
         processorResponseCode: eventType.toUpperCase(),
@@ -414,8 +465,10 @@ app.post('/api/track/payment-event', (req, res) => {
         location: JourneyLog.formatLocation(visitor) || 'Local (DEV)',
         device: clientInfo.device,
         createdAt: new Date().toISOString(),
-      });
+      };
+      failStore.transactions.unshift(failTx);
       saveStore(failStore);
+      upsertTransactionInSupabase(failTx);
     } catch (_) {}
   }
 
@@ -499,7 +552,12 @@ app.post('/api/client/report', (req, res) => {
 app.get('/api/health', async (_req, res) => {
   try {
     await getAccessToken();
-    res.json({ ok: true, mode: PAYPAL_MODE, paypalAuthenticated: true });
+    res.json({
+      ok: true,
+      mode: PAYPAL_MODE,
+      paypalAuthenticated: true,
+      supabaseConfigured: isSupabaseConfigured(),
+    });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
@@ -665,7 +723,21 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
 
     const data = await response.json();
     const captureObj = data?.purchase_units?.[0]?.payments?.captures?.[0] || {};
-    const cardObj = data?.payment_source?.card || {};
+    const paymentSourceObj = data?.payment_source || {};
+    const cardObj =
+      paymentSourceObj.card ||
+      paymentSourceObj.apple_pay?.card ||
+      paymentSourceObj.google_pay?.card ||
+      {};
+    const resolvedPaymentSource = paymentSourceObj.apple_pay
+      ? 'apple_pay'
+      : paymentSourceObj.google_pay
+      ? 'google_pay'
+      : paymentSourceObj.venmo
+      ? 'venmo'
+      : paymentSourceObj.paypal
+      ? 'paypal'
+      : 'card';
     const procCode = captureObj?.processor_response?.response_code || null;
 
     if (!response.ok || captureObj?.status === 'DECLINED') {
@@ -680,7 +752,7 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
       const fLine = failureLine(
         orderID,
         {
-          brand: cardObj.brand || 'CARD',
+          brand: cardObj.brand || resolvedPaymentSource.toUpperCase(),
           cardType: cardObj.type || '',
           last4: cardObj.last_digits || '',
           code: procCode || issue,
@@ -699,7 +771,7 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
       });
 
       const failStore = loadStore();
-      failStore.transactions.unshift({
+      const failTx = {
         txId: `FAIL-${Date.now()}`,
         type: 'FAILED',
         status: 'FAILED',
@@ -712,7 +784,8 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
         netAmount: '0.00',
         currency: 'USD',
         donorName: cardObj.name || donorName || 'Declined Attempt',
-        cardBrand: cardObj.brand || 'CARD',
+        paymentSource: resolvedPaymentSource,
+        cardBrand: cardObj.brand || resolvedPaymentSource.toUpperCase(),
         cardLast4: cardObj.last_digits || null,
         processorResponseCode: procCode || issue,
         failureReason: errDesc,
@@ -723,9 +796,12 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
         ipAddress: clientInfo.ipAddress,
         location: JourneyLog.formatLocation(visitor) || 'Local (DEV)',
         device: clientInfo.device,
+        rawResponse: data,
         createdAt: new Date().toISOString(),
-      });
+      };
+      failStore.transactions.unshift(failTx);
       saveStore(failStore);
+      upsertTransactionInSupabase(failTx);
 
       return res.status(response.status >= 400 ? response.status : 422).json({
         error: errDesc,
@@ -736,7 +812,10 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
 
     recordOutcome(true, { country: visitor.country, code: procCode || '0000' });
 
-    const vaultInfo = cardObj?.attributes?.vault || null;
+    const vaultInfo =
+      paymentSourceObj.card?.attributes?.vault ||
+      cardObj?.attributes?.vault ||
+      null;
     const netRef = captureObj?.network_transaction_reference || {};
     const nowIso = new Date().toISOString();
     const capturedAmount =
@@ -748,14 +827,21 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
 
     const payerName = data?.payer?.name?.given_name
       ? `${data.payer.name.given_name} ${data.payer.name.surname || ''}`.trim()
-      : '';
+      : paymentSourceObj.paypal?.name?.given_name
+      ? `${paymentSourceObj.paypal.name.given_name} ${
+          paymentSourceObj.paypal.name.surname || ''
+        }`.trim()
+      : paymentSourceObj.google_pay?.name || '';
     const resolvedDonorName =
       [cardObj.name, donorName, payerName]
         .map((n) => String(n || '').trim())
         .find((n) => n && !/^(=|-|—|unknown|null|undefined)$/i.test(n)) ||
       'Generous Supporter';
     const resolvedEmail =
-      donorEmail || data?.payer?.email_address || null;
+      donorEmail ||
+      data?.payer?.email_address ||
+      paymentSourceObj.paypal?.email_address ||
+      null;
     const fbclid = tracking.fbclid || req.cookies._fbclid || null;
     const utmCampaign = tracking.utm_campaign || 'direct';
     const utmSource = tracking.utm_source || null;
@@ -799,6 +885,7 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
         rebillCount: 0,
       };
       store.schedules.unshift(newSchedule);
+      upsertScheduleInSupabase(newSchedule);
     }
 
     // Fire server-side Meta Conversions API Donate (+ Subscribe for recurring) with shared eventId
@@ -862,14 +949,25 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
       }
     }
 
+    const resolvedBrandLabel =
+      cardObj.brand ||
+      (resolvedPaymentSource === 'apple_pay'
+        ? 'APPLE_PAY'
+        : resolvedPaymentSource === 'google_pay'
+        ? 'GOOGLE_PAY'
+        : resolvedPaymentSource === 'venmo'
+        ? 'VENMO'
+        : resolvedPaymentSource === 'paypal'
+        ? 'PAYPAL'
+        : 'VISA');
+
     JourneyLog.purchase(
       visitor,
       {
         amount: baseNum,
         tip: tipNum,
         total: totalNum,
-        brand:
-          cardObj.brand || (data?.payment_source?.paypal ? 'PayPal' : 'Card'),
+        brand: resolvedBrandLabel,
         last4: cardObj.last_digits || null,
         name: resolvedDonorName,
         frequency,
@@ -895,8 +993,9 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
         captureObj?.seller_receivable_breakdown?.net_amount?.value || null,
       currency: 'USD',
       donorName: resolvedDonorName,
-      cardBrand:
-        cardObj.brand || (data?.payment_source?.paypal ? 'PAYPAL' : 'VISA'),
+      donorEmail: resolvedEmail,
+      paymentSource: resolvedPaymentSource,
+      cardBrand: resolvedBrandLabel,
       cardLast4: cardObj.last_digits || null,
       cardExpiry: cardObj.expiry || null,
       vaultId: vaultInfo?.id || null,
@@ -918,11 +1017,13 @@ app.post('/api/orders/:orderID/capture', async (req, res) => {
       donateEventId,
       capiMeta: capiResult.meta,
       capiTiktok: capiResult.tiktok,
+      rawResponse: data,
       createdAt: captureObj.create_time || nowIso,
     };
 
     store.transactions.unshift(txRecord);
     saveStore(store);
+    upsertTransactionInSupabase(txRecord);
 
     return res.json({
       ...data,
@@ -1073,6 +1174,19 @@ function buildDashboardData() {
 // Dashboard & Debug data endpoint
 app.get(['/api/dashboard', '/api/debug/transactions'], (_req, res) => {
   res.json(buildDashboardData());
+});
+
+// Reset / Clean Dashboard & Database (local store + Supabase tables)
+app.post('/api/dashboard/reset', async (_req, res) => {
+  try {
+    saveStore({ schedules: [], transactions: [] });
+    visitors.clear();
+    const sbRes = await resetSupabaseTables();
+    JourneyLog.system('🧹', 'Dashboard & database reset to clean state');
+    res.json({ ok: true, supabase: sbRes });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 // Create a new Subscription (via existing Vault Token ID OR direct Card Vaulting via PayPal Orders v2)
@@ -1281,6 +1395,8 @@ app.post('/api/subscriptions', async (req, res) => {
       store.schedules.unshift(newSchedule);
       store.transactions.unshift(txRecord);
       saveStore(store);
+      upsertScheduleInSupabase(newSchedule);
+      upsertTransactionInSupabase(txRecord);
 
       JourneyLog.system(
         '✅',
@@ -1346,6 +1462,7 @@ app.post('/api/subscriptions', async (req, res) => {
 
     store.schedules.unshift(newSchedule);
     saveStore(store);
+    upsertScheduleInSupabase(newSchedule);
 
     JourneyLog.system(
       '✅',
@@ -1400,6 +1517,7 @@ app.patch('/api/subscriptions/:scheduleId', (req, res) => {
     }
 
     saveStore(store);
+    upsertScheduleInSupabase(sub);
     JourneyLog.system(
       '🔁',
       `Updated subscription ${scheduleId} → ${sub.status || 'ACTIVE'} · $${
@@ -1423,6 +1541,7 @@ app.delete('/api/subscriptions/:scheduleId', (req, res) => {
   }
   const [removed] = store.schedules.splice(idx, 1);
   saveStore(store);
+  deleteScheduleInSupabase(scheduleId);
   JourneyLog.system(
     '🗑️',
     `Removed subscription ${scheduleId} (${removed.donorName} · vault:${removed.vaultId})`
@@ -1536,7 +1655,7 @@ app.post('/api/vault/charge', async (req, res) => {
         }): ${errMsg}`,
         `${visitor.country}:REBILL_${procCode || 'FAIL'}`
       );
-      store.transactions.unshift({
+      const failRebillTx = {
         txId: `FAIL-${Date.now()}`,
         type: 'FAILED',
         status: 'FAILED',
@@ -1563,9 +1682,12 @@ app.post('/api/vault/charge', async (req, res) => {
           JourneyLog.formatLocation(visitor) ||
           'Local (DEV)',
         device: clientInfo.device,
+        rawResponse: data,
         createdAt: new Date().toISOString(),
-      });
+      };
+      store.transactions.unshift(failRebillTx);
       saveStore(store);
+      upsertTransactionInSupabase(failRebillTx);
 
       return res.status(response.status >= 400 ? response.status : 422).json({
         error: errMsg,
@@ -1627,6 +1749,10 @@ app.post('/api/vault/charge', async (req, res) => {
 
     store.transactions.unshift(rebillTx);
     saveStore(store);
+    if (matchedSchedule) {
+      upsertScheduleInSupabase(matchedSchedule);
+    }
+    upsertTransactionInSupabase(rebillTx);
 
     JourneyLog.paymentEvent(
       visitor,
@@ -1690,5 +1816,20 @@ app.listen(PORT, async () => {
     );
   } catch (err) {
     JourneyLog.system('💥', `PayPal boot health check FAILED: ${err.message}`);
+  }
+
+  if (isSupabaseConfigured()) {
+    try {
+      const hydrated = await hydrateStoreFromSupabase();
+      if (hydrated) {
+        saveStore(hydrated);
+        JourneyLog.system(
+          '🗄️',
+          `Supabase connected — hydrated ${hydrated.schedules.length} schedules & ${hydrated.transactions.length} transactions`
+        );
+      }
+    } catch (sbErr) {
+      JourneyLog.system('⚠️', `Supabase hydration error: ${sbErr.message}`);
+    }
   }
 });

@@ -446,7 +446,7 @@
     const params = new URLSearchParams({
       'client-id': state.clientId,
       currency: state.currency,
-      components: 'buttons,card-fields',
+      components: 'buttons,card-fields,googlepay,applepay',
       intent: 'capture',
       commit: 'true',
     });
@@ -759,12 +759,299 @@
           );
         }
       }
+
+      // 3. Mount Express Digital Wallets (Google Pay & Apple Pay) when eligible
+      await Promise.allSettled([
+        mountGooglePayWallet(paypal),
+        mountApplePayWallet(paypal),
+      ]);
     } catch (err) {
       const errMsg = err?.message || 'Unable to initialize PayPal SDK.';
       showStatus(errMsg, 'error');
       if (window.Tracking) {
         window.Tracking.trackPaymentEvent('sdk_error', errMsg, null, 'sdk');
       }
+    }
+  }
+
+  async function mountGooglePayWallet(paypal) {
+    const container = document.getElementById('google-pay-button-container');
+    if (!container || typeof paypal.Googlepay !== 'function') return;
+
+    // Wait briefly if Google Pay JS script is still loading
+    for (let i = 0; i < 15 && !window.google?.payments?.api?.PaymentsClient; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    if (!window.google?.payments?.api?.PaymentsClient) return;
+
+    try {
+      const googlepay = paypal.Googlepay();
+      const gpConfig = await googlepay.config();
+      if (!gpConfig?.isEligible) return;
+
+      const env =
+        state.mode === 'live' && window.location.hostname !== 'localhost'
+          ? 'PRODUCTION'
+          : 'TEST';
+      const paymentsClient = new window.google.payments.api.PaymentsClient({
+        environment: env,
+      });
+
+      const readyToPay = await paymentsClient.isReadyToPay({
+        apiVersion: gpConfig.apiVersion || 2,
+        apiVersionMinor: gpConfig.apiVersionMinor || 0,
+        allowedPaymentMethods: gpConfig.allowedPaymentMethods,
+      });
+      if (!readyToPay?.result) return;
+
+      const gpBtn = paymentsClient.createButton({
+        allowedPaymentMethods: gpConfig.allowedPaymentMethods,
+        buttonColor: 'black',
+        buttonType: 'donate',
+        buttonRadius: 20,
+        buttonSizeMode: 'fill',
+        onClick: async () => {
+          clearStatus();
+          if (!validateDonationAmount()) return;
+
+          const finalAmt = getFinalAmountNumber();
+          if (window.Tracking) {
+            window.Tracking.trackInitiateCheckout(finalAmt, state.currency);
+            window.Tracking.fireAddPaymentInfoOnce(finalAmt, state.currency);
+          }
+
+          try {
+            const paymentDataRequest = {
+              apiVersion: gpConfig.apiVersion || 2,
+              apiVersionMinor: gpConfig.apiVersionMinor || 0,
+              allowedPaymentMethods: gpConfig.allowedPaymentMethods,
+              merchantInfo: gpConfig.merchantInfo,
+              transactionInfo: {
+                totalPriceStatus: 'FINAL',
+                totalPrice: finalAmt.toFixed(2),
+                currencyCode: state.currency,
+                countryCode: gpConfig.countryCode || 'US',
+              },
+            };
+
+            const paymentData =
+              await paymentsClient.loadPaymentData(paymentDataRequest);
+            const orderId = await createOrderOnServer('google_pay');
+            const confirmResult = await googlepay.confirmOrder({
+              orderId,
+              paymentMethodData: paymentData.paymentMethodData,
+            });
+
+            if (confirmResult.status === 'PAYER_ACTION_REQUIRED') {
+              await googlepay.initiatePayerAction({ orderId });
+            } else if (confirmResult.status !== 'APPROVED') {
+              throw new Error('Google Pay authorization was not approved.');
+            }
+
+            const donateEventId = window.Tracking
+              ? window.Tracking.generateEventId('Donate')
+              : `Donate_${Date.now()}`;
+            const captureData = await captureOrderOnServer(
+              orderId,
+              donateEventId
+            );
+            if (window.Tracking) {
+              window.Tracking.trackDonateBrowser(
+                finalAmt,
+                state.currency,
+                donateEventId
+              );
+            }
+            if (window.CheckoutMonitor) {
+              window.CheckoutMonitor.stage('done');
+            }
+            showStatus(formatSuccessMessage(captureData, orderId), 'success');
+            if (captureData._recordedTransaction) {
+              openThankYouModal(captureData._recordedTransaction);
+            }
+          } catch (err) {
+            if (err?.statusCode === 'CANCELED') {
+              if (window.Tracking) {
+                window.Tracking.trackPaymentEvent(
+                  'modal_close',
+                  'cancelled Google Pay sheet',
+                  finalAmt,
+                  'google_pay'
+                );
+              }
+              return;
+            }
+            const msg = err?.message || 'Google Pay checkout failed.';
+            showStatus(msg, 'error');
+            if (window.Tracking) {
+              window.Tracking.trackPaymentEvent(
+                'paypal_error',
+                `Google Pay: ${msg.slice(0, 200)}`,
+                finalAmt,
+                'google_pay'
+              );
+            }
+          }
+        },
+      });
+
+      container.innerHTML = '';
+      container.appendChild(gpBtn);
+      container.hidden = false;
+    } catch (_err) {
+      // keep hidden if device/browser does not support Google Pay
+    }
+  }
+
+  async function mountApplePayWallet(paypal) {
+    const container = document.getElementById('apple-pay-button-container');
+    if (
+      !container ||
+      !window.ApplePaySession ||
+      typeof paypal.Applepay !== 'function'
+    ) {
+      return;
+    }
+
+    try {
+      if (!window.ApplePaySession.canMakePayments()) return;
+      const applepay = paypal.Applepay();
+      const apConfig = await applepay.config();
+      if (!apConfig?.isEligible) return;
+
+      container.innerHTML = `
+        <button type="button" id="apple-pay-donate-btn" class="apple-pay-wallet-btn" aria-label="Donate with Apple Pay">
+          <span>Donate with</span>
+          <span style="font-weight:700;">&#63743; Pay</span>
+        </button>
+      `;
+      container.hidden = false;
+
+      const apBtn = document.getElementById('apple-pay-donate-btn');
+      apBtn.addEventListener('click', () => {
+        clearStatus();
+        if (!validateDonationAmount()) return;
+
+        const finalAmt = getFinalAmountNumber();
+        if (window.Tracking) {
+          window.Tracking.trackInitiateCheckout(finalAmt, state.currency);
+          window.Tracking.fireAddPaymentInfoOnce(finalAmt, state.currency);
+        }
+
+        const paymentRequest = {
+          countryCode: apConfig.countryCode || apConfig.merchantCountry || 'US',
+          currencyCode: state.currency,
+          merchantCapabilities: apConfig.merchantCapabilities,
+          supportedNetworks: apConfig.supportedNetworks,
+          requiredBillingContactFields: ['postalAddress', 'name', 'email'],
+          total: {
+            label: 'Help my baby',
+            amount: finalAmt.toFixed(2),
+            type: 'final',
+          },
+        };
+
+        const session = new window.ApplePaySession(4, paymentRequest);
+        let currentOrderId = null;
+
+        session.onvalidatemerchant = async (event) => {
+          try {
+            const [validationResult, orderId] = await Promise.all([
+              applepay.validateMerchant({
+                validationUrl: event.validationURL,
+                displayName: 'Help my baby',
+              }),
+              createOrderOnServer('apple_pay'),
+            ]);
+            currentOrderId = orderId;
+            if (!validationResult?.merchantSession) {
+              session.abort();
+              return;
+            }
+            session.completeMerchantValidation(validationResult.merchantSession);
+          } catch (err) {
+            session.abort();
+            const msg = err?.message || 'Apple Pay merchant validation failed.';
+            showStatus(msg, 'error');
+            if (window.Tracking) {
+              window.Tracking.trackPaymentEvent(
+                'paypal_error',
+                `Apple Pay validation: ${msg.slice(0, 180)}`,
+                finalAmt,
+                'apple_pay'
+              );
+            }
+          }
+        };
+
+        session.onpaymentauthorized = async (event) => {
+          try {
+            if (!currentOrderId) {
+              session.completePayment(window.ApplePaySession.STATUS_FAILURE);
+              return;
+            }
+            const confirmResult = await applepay.confirmOrder({
+              orderId: currentOrderId,
+              token: event.payment.token,
+              billingContact: event.payment.billingContact,
+            });
+
+            const donateEventId = window.Tracking
+              ? window.Tracking.generateEventId('Donate')
+              : `Donate_${Date.now()}`;
+            const captureData = await captureOrderOnServer(
+              currentOrderId,
+              donateEventId
+            );
+            session.completePayment(window.ApplePaySession.STATUS_SUCCESS);
+
+            if (window.Tracking) {
+              window.Tracking.trackDonateBrowser(
+                finalAmt,
+                state.currency,
+                donateEventId
+              );
+            }
+            if (window.CheckoutMonitor) {
+              window.CheckoutMonitor.stage('done');
+            }
+            showStatus(
+              formatSuccessMessage(captureData, currentOrderId),
+              'success'
+            );
+            if (captureData._recordedTransaction) {
+              openThankYouModal(captureData._recordedTransaction);
+            }
+          } catch (err) {
+            session.completePayment(window.ApplePaySession.STATUS_FAILURE);
+            const msg = err?.message || 'Apple Pay authorization failed.';
+            showStatus(msg, 'error');
+            if (window.Tracking) {
+              window.Tracking.trackPaymentEvent(
+                'paypal_error',
+                `Apple Pay capture: ${msg.slice(0, 180)}`,
+                finalAmt,
+                'apple_pay'
+              );
+            }
+          }
+        };
+
+        session.oncancel = () => {
+          if (window.Tracking) {
+            window.Tracking.trackPaymentEvent(
+              'modal_close',
+              'cancelled Apple Pay sheet',
+              finalAmt,
+              'apple_pay'
+            );
+          }
+        };
+
+        session.begin();
+      });
+    } catch (_err) {
+      // keep hidden if Apple Pay is unavailable
     }
   }
 
@@ -895,6 +1182,7 @@
       const res = await fetch('/api/config');
       const config = await res.json();
       state.clientId = config.clientId;
+      state.mode = config.mode || 'live';
       state.currency = config.currency || 'USD';
       state.feeRatePercent = config.feeRatePercent ?? 5.4;
       state.flatFee = config.flatFee ?? 0.3;
