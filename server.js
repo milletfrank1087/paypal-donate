@@ -34,6 +34,8 @@ const {
   upsertTransactionInSupabase,
   logEventInSupabase,
   resetSupabaseTables,
+  fetchPayPalAdSpend,
+  triggerPayPalAdsRefresh,
 } = require('./lib/supabase');
 
 const app = express();
@@ -1327,9 +1329,69 @@ function buildDashboardData() {
   };
 }
 
+let lastSupabaseSyncMs = 0;
+
+async function syncStoreFromSupabaseIfNeeded(force = false) {
+  if (!isSupabaseConfigured()) return;
+  const now = Date.now();
+  if (!force && now - lastSupabaseSyncMs < 15000) return;
+  lastSupabaseSyncMs = now;
+  try {
+    const hydrated = await hydrateStoreFromSupabase();
+    if (!hydrated) return;
+    const local = loadStore();
+    const txMap = new Map();
+    for (const t of local.transactions || []) {
+      if (t && t.txId) txMap.set(t.txId, t);
+    }
+    for (const t of hydrated.transactions || []) {
+      if (t && t.txId) txMap.set(t.txId, t);
+    }
+    const schedMap = new Map();
+    for (const s of local.schedules || []) {
+      if (s && s.scheduleId) schedMap.set(s.scheduleId, s);
+    }
+    for (const s of hydrated.schedules || []) {
+      if (s && s.scheduleId) schedMap.set(s.scheduleId, s);
+    }
+    const mergedTransactions = [...txMap.values()].sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+    const mergedSchedules = [...schedMap.values()].sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+    saveStore({ schedules: mergedSchedules, transactions: mergedTransactions });
+  } catch (err) {
+    console.error('[dashboard] syncStoreFromSupabaseIfNeeded error:', err.message);
+  }
+}
+
 // Dashboard & Debug data endpoint
-app.get(['/api/dashboard', '/api/debug/transactions'], (_req, res) => {
-  res.json(buildDashboardData());
+app.get(['/api/dashboard', '/api/debug/transactions'], async (req, res) => {
+  try {
+    const forceAds = req.query.force_ads === '1' || req.query.force_ads === 'true';
+    if (forceAds) {
+      await Promise.all([
+        triggerPayPalAdsRefresh(),
+        syncStoreFromSupabaseIfNeeded(true),
+      ]);
+    } else {
+      await syncStoreFromSupabaseIfNeeded(false);
+    }
+    const data = buildDashboardData();
+    const knownUtmIds = new Set();
+    for (const t of data.transactions || []) {
+      if (t?.utmCampaign && t.utmCampaign !== 'direct') knownUtmIds.add(String(t.utmCampaign));
+    }
+    for (const s of data.schedules || []) {
+      if (s?.utmCampaign && s.utmCampaign !== 'direct') knownUtmIds.add(String(s.utmCampaign));
+    }
+    data.adSpendByRange = await fetchPayPalAdSpend(knownUtmIds);
+    res.json(data);
+  } catch (err) {
+    console.error('[dashboard] endpoint error:', err.message);
+    res.json(buildDashboardData());
+  }
 });
 
 // Reset / Clean Dashboard & Database (local store + Supabase tables)

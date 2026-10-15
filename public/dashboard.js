@@ -1,6 +1,6 @@
 (function () {
   let dashboardData = null;
-  let currentRange = 'allTime';
+  let currentRange = 'today';
   let currentSubFilter = 'ALL';
   let currentTxFilter = 'ALL';
   let showFailedTx = true;
@@ -12,6 +12,9 @@
   function fmt(num) {
     const n = Number.parseFloat(num);
     if (!Number.isFinite(n)) return '$0.00';
+    if (n < 0) {
+      return '−$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
     return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
@@ -160,8 +163,39 @@
     const feePct = gross > 0 ? ((fees / gross) * 100).toFixed(1) + '%' : '0.0%';
     const aov = completedTxs.length > 0 ? gross / completedTxs.length : 0;
 
+    const adRange = (dashboardData.adSpendByRange && dashboardData.adSpendByRange[currentRange]) || {
+      spend: 0,
+      metaPurchases: 0,
+      metaValue: 0,
+      campaigns: [],
+    };
+    const adSpend = Number(adRange.spend || 0);
+    const trueProfit = net - adSpend;
+    const realRoas = adSpend > 0 ? (gross / adSpend).toFixed(2) + 'x' : '—';
+    const realCpa = adSpend > 0 && completedTxs.length > 0 ? fmt(adSpend / completedTxs.length) : '—';
+    const trueMarginPct = gross > 0 ? ((trueProfit / gross) * 100).toFixed(1) + '%' : '0.0%';
+
     document.getElementById('hero-window').textContent = bounds.label;
     document.getElementById('hero-net').textContent = fmt(net);
+    const heroLiquidEl = document.getElementById('hero-liquid-net');
+    if (heroLiquidEl) heroLiquidEl.textContent = fmt(net);
+    const heroAdSpendEl = document.getElementById('hero-ad-spend');
+    if (heroAdSpendEl) heroAdSpendEl.textContent = fmt(adSpend);
+    const heroSpendCardEl = document.getElementById('hero-spend-card');
+    if (heroSpendCardEl) heroSpendCardEl.textContent = fmt(adSpend);
+    const heroSpendSubEl = document.getElementById('hero-spend-sub');
+    if (heroSpendSubEl) {
+      heroSpendSubEl.textContent = `CPA ${realCpa} · ${(adRange.campaigns || []).length} Meta campaign${(adRange.campaigns || []).length === 1 ? '' : 's'}`;
+    }
+    const heroTrueProfitEl = document.getElementById('hero-true-profit');
+    if (heroTrueProfitEl) {
+      heroTrueProfitEl.textContent = fmt(trueProfit);
+      heroTrueProfitEl.className = `text-4xl sm:text-6xl font-bold tracking-tight tabular-numbers ${trueProfit < 0 ? 'text-[#df1b41]' : 'text-[#00875a]'}`;
+    }
+    const heroRoasPillEl = document.getElementById('hero-roas-pill');
+    if (heroRoasPillEl) {
+      heroRoasPillEl.textContent = `ROAS ${realRoas}`;
+    }
     document.getElementById('hero-mrr').textContent = fmt(stats.estimatedMonthlyRunRate || 0);
     document.getElementById('hero-mrr-sub').textContent = `${stats.activeSubscriptions || 0} active · ${stats.pausedSubscriptions || 0} paused`;
     document.getElementById('hero-margin').textContent = marginPct;
@@ -177,11 +211,26 @@
     document.getElementById('wf-aov').textContent = fmt(aov);
 
     document.getElementById('wf-rebills').textContent = fmt(rebillsGross);
-    document.getElementById('wf-rebills-count').textContent = `${rebillsCount} rebills`;
+    document.getElementById('wf-rebills-count').textContent = `${rebillsCount}`;
     document.getElementById('wf-initial').textContent = fmt(initialGross);
 
     document.getElementById('wf-net').textContent = fmt(net);
     document.getElementById('wf-margin-badge').textContent = marginPct;
+
+    const wfSpendEl = document.getElementById('wf-spend');
+    if (wfSpendEl) wfSpendEl.textContent = '−' + fmt(adSpend);
+    const wfRoasEl = document.getElementById('wf-roas-badge');
+    if (wfRoasEl) wfRoasEl.textContent = `ROAS ${realRoas}`;
+    const wfCpaEl = document.getElementById('wf-cpa');
+    if (wfCpaEl) wfCpaEl.textContent = `${realCpa} (${adRange.metaPurchases || 0} Meta px)`;
+
+    const wfTrueProfitEl = document.getElementById('wf-true-profit');
+    if (wfTrueProfitEl) {
+      wfTrueProfitEl.textContent = fmt(trueProfit);
+      wfTrueProfitEl.className = `text-lg sm:text-2xl lg:text-3xl font-bold tabular-numbers truncate ${trueProfit < 0 ? 'text-[#df1b41]' : 'text-[#00875a]'}`;
+    }
+    const wfTrueMarginEl = document.getElementById('wf-true-margin-badge');
+    if (wfTrueMarginEl) wfTrueMarginEl.textContent = trueMarginPct;
     document.getElementById('wf-cadence-split').textContent = `${fmt(stats.weeklyRecurringVolume || 0)}/wk · ${fmt(stats.monthlyRecurringVolume || 0)}/mo`;
 
     const allSubs = dashboardData.schedules || [];
@@ -202,8 +251,101 @@
       failedBadge.classList.add('hidden');
     }
 
+    renderAdCampaignsTable(completedTxs, adRange);
     renderSubscriptionsTable();
     renderTransactionsTable(allTxs);
+  }
+
+  function renderAdCampaignsTable(completedTxs, adRange) {
+    const tbody = document.getElementById('ad-campaigns-tbody');
+    if (!tbody) return;
+    const campaigns = adRange?.campaigns || [];
+    const byCamp = new Map();
+
+    for (const c of campaigns) {
+      byCamp.set(String(c.campaignId), {
+        campaignId: String(c.campaignId),
+        name: c.name || c.campaignId,
+        status: c.status || 'ACTIVE',
+        pixelId: c.pixelId || null,
+        spend: Number(c.spend || 0),
+        metaPurchases: Number(c.metaPurchases || 0),
+        count: 0,
+        gross: 0,
+        fees: 0,
+        net: 0,
+      });
+    }
+
+    for (const t of completedTxs || []) {
+      const cid = String(t.utmCampaign || 'direct');
+      if (!byCamp.has(cid)) {
+        byCamp.set(cid, {
+          campaignId: cid,
+          name: cid === 'direct' ? 'Direct / Untracked' : cid,
+          status: cid === 'direct' ? 'DIRECT' : 'ACTIVE',
+          pixelId: null,
+          spend: 0,
+          metaPurchases: 0,
+          count: 0,
+          gross: 0,
+          fees: 0,
+          net: 0,
+        });
+      }
+      const row = byCamp.get(cid);
+      const amt = Number.parseFloat(t.amount) || 0;
+      const fee = Number.parseFloat(t.paypalFee) || 0;
+      const rowNet =
+        t.netAmount !== null && t.netAmount !== undefined
+          ? Number.parseFloat(t.netAmount)
+          : Math.max(0, amt - fee);
+      row.count += 1;
+      row.gross += amt;
+      row.fees += fee;
+      row.net += rowNet;
+    }
+
+    const rows = [...byCamp.values()].sort((a, b) => (b.spend - a.spend) || (b.gross - a.gross));
+    const badgeEl = document.getElementById('ads-count-badge');
+    if (badgeEl) badgeEl.textContent = `${rows.length} Campaign${rows.length === 1 ? '' : 's'}`;
+
+    if (rows.length === 0) {
+      tbody.innerHTML =
+        '<tr><td colspan="10" class="text-center py-6 text-slate-400 text-xs font-sans">No Meta campaigns or attributed donations in this window.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = rows
+      .map((r) => {
+        const trueProfit = r.net - r.spend;
+        const cpa = r.spend > 0 && r.count > 0 ? fmt(r.spend / r.count) : '—';
+        const roas = r.spend > 0 ? (r.gross / r.spend).toFixed(2) + 'x' : '—';
+        const st = String(r.status || 'ACTIVE').toUpperCase();
+        const stBadge =
+          st === 'ACTIVE'
+            ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#edf9f3] text-[#00875a] border border-[#c2ecd7]">● ACTIVE</span>'
+            : `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600">${esc(st)}</span>`;
+
+        return `
+          <tr>
+            <td class="sticky-col font-sans">
+              <div class="font-semibold text-[#061b31] text-xs">${esc(r.name)}</div>
+              <div class="text-[11px] text-slate-400 font-mono">ID: ${esc(r.campaignId)}${r.pixelId ? ` · Pixel: ${esc(r.pixelId)}` : ''}</div>
+            </td>
+            <td class="font-sans">${stBadge}</td>
+            <td class="text-right font-bold text-[#061b31]">${r.count}</td>
+            <td class="text-right font-bold text-[#061b31]">${fmt(r.gross)}</td>
+            <td class="text-right text-[#df1b41]">−${fmt(r.fees)}</td>
+            <td class="text-right font-bold text-[#00875a]">${fmt(r.net)}</td>
+            <td class="text-right font-bold text-amber-600">−${fmt(r.spend)}</td>
+            <td class="text-right font-bold ${trueProfit < 0 ? 'text-[#df1b41]' : 'text-[#00875a]'}">${fmt(trueProfit)}</td>
+            <td class="text-right text-slate-700">${cpa}</td>
+            <td class="text-right font-bold text-[#635bff]">${roas}</td>
+          </tr>
+        `;
+      })
+      .join('');
   }
 
   function renderSubscriptionsTable() {
@@ -347,16 +489,28 @@
       .join('');
   }
 
-  async function refreshDashboard() {
+  async function refreshDashboard(forceAds = false) {
+    const btn = document.getElementById('refresh-btn');
+    const icon = document.getElementById('refresh-icon');
+    const label = document.getElementById('refresh-btn-label');
+    if (btn) btn.disabled = true;
+    if (icon) icon.classList.add('animate-spin');
+    if (label && forceAds) label.textContent = 'Syncing…';
     try {
-      const res = await fetch('/api/dashboard');
+      const url = forceAds ? '/api/dashboard?force_ads=1' : '/api/dashboard';
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to load dashboard data');
       dashboardData = await res.json();
       document.getElementById('last-updated-label').textContent =
         'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       renderOverview();
+      if (forceAds) showToast('Synced latest PayPal & Meta Ad Spend');
     } catch (err) {
       showToast(err.message, 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+      if (icon) icon.classList.remove('animate-spin');
+      if (label) label.textContent = 'Refresh';
     }
   }
 
